@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - AWS Cloud Operations Center</title>
+    
+    <!-- Font Awesome 6 CDN -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    
+    <!-- Master & Dashboard Stylesheets -->
+
+
+    
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/dashboard.css">
+</head>
+<body>
+    <div class="app-container">
+        
+        <!-- Fixed Left Sidebar -->
+        <aside id="sidebar" class="sidebar">
+            <div class="sidebar-header">
+                <a href="dashboard.html" class="sidebar-brand">
+                    <i class="fa-solid fa-cloud-bolt"></i>
+                    <span>CloudOps Center</span>
+                </a>
+            </div>
+            
+            <ul class="sidebar-menu">
+                <li class="menu-category">Main Operations</li>
+                <li>
+                    <a href="dashboard.html" class="sidebar-link active">
+                        <i class="fa-solid fa-chart-line"></i>
+                        <span>Dashboard</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="ec2.html" class="sidebar-link">
+                        <i class="fa-solid fa-server"></i>
+                        <span>EC2 Management</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="s3.html" class="sidebar-link">
+                        <i class="fa-solid fa-database"></i>
+                        <span>S3 Storage</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="cloudwatch.html" class="sidebar-link">
+                        <i class="fa-solid fa-chart-pie"></i>
+                        <span>CloudWatch</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="reports.html" class="sidebar-link">
+                        <i class="fa-solid fa-file-invoice-dollar"></i>
+                        <span>Reports</span>
+                    </a>
+                </li>
+                
+                <li class="menu-category">Account & System</li>
+                <li>
+                    <a href="profile.html" class="sidebar-link">
+                        <i class="fa-solid fa-user-gear"></i>
+                        <span>Profile</span>
+                    </a>
+                </li>
+                <li>
+                    <a href="settings.html" class="sidebar-link">
+                        <i class="fa-solid fa-sliders"></i>
+                        <span>Settings</span>
+                    </a>
+                </li>
+            </ul>
+
+            <div class="sidebar-footer">
+                <a href="login.html" class="sidebar-link sidebar-logout">
+                    <i class="fa-solid fa-arrow-right-from-bracket"></i>
+                    <span>Logout</span>
+                </a>
+            </div>
+        </aside>
+
+        <!-- Main Content Area -->
+        <div class="main-wrapper">
+            
+            <!-- Sticky Top Navigation Bar -->
+            <header class="navbar">
+                <div class="navbar-left">
+                    <button id="btn-sidebar-toggle" class="btn-sidebar-toggle" aria-label="Toggle Sidebar">
+                        <i class="fa-solid fa-bars"></i>
+                    </button>
+                    
+                    <div class="search-box">
+                        <i class="fa-solid fa-magnifying-glass"></i>
+                        <input type="text" class="search-input" placeholder="Search EC2, S3, alarms, logs...">
+                    </div>
+                </div>
+
+                <div class="navbar-right">
+                    <div class="region-badge">
+                        <i class="fa-solid fa-earth-americas"></i>
+                        <span>us-east-1</span>
+                    </div>
+
+                    <div class="current-date">
+                        <i class="fa-regular fa-calendar"></i>
+                        <span id="current-date-text">Wed, Aug 5, 2026</span>
+                    </div>
+
+                    <button class="nav-icon-btn" aria-label="Notifications" title="View Notifications">
+                        <i class="fa-regular fa-bell"></i>
+                        <span class="notification-badge">3</span>
+                    </button>
+
+                    <!-- Profile Dropdown Component -->
+                    <div class="profile-dropdown-container">
+                        <button id="profile-trigger" class="profile-trigger">
+                            <div class="avatar">HU</div>
+                            <div class="profile-info">
+                                <span class="profile-name">Harsh User</span>
+                                <span class="profile-role">Cloud Engineer</span>
+                            </div>
+                            <i class="fa-solid fa-chevron-down" style="font-size: 0.75rem; color: var(--text-muted);"></i>
+                        </button>
+
+                        <div id="profile-dropdown-menu" class="profile-dropdown-menu">
+                            <div class="dropdown-header">
+                                <p>Harsh User</p>
+                                <span>admin@cloudops.internal</span>
+                            </div>
+                            <a href="profile.html" class="dropdown-item">
+                                <i class="fa-solid fa-user"></i> Profile Details
+                            </a>
+                            <a href="settings.html" class="dropdown-item">
+                                <i class="fa-solid fa-gear"></i> System Preferences
+                            </a>
+                            <div class="dropdown-divider"></div>
+                            <a href="login.html" class="dropdown-item" style="color: #EF4444;">
+                                <i class="fa-solid fa-power-off"></i> Sign Out
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Dashboard Content Container -->
+            <main class="content-container">
+                
+                <!-- Page Title Banner -->
+                <div style="margin-bottom: 1.75rem;">
+                    <h1 style="font-size: 1.5rem; font-weight: 700; color: var(--text-primary);">Cloud Operations Dashboard</h1>
+                    <p style="font-size: 0.875rem; color: var(--text-muted);">Real-time monitoring and management of your AWS Cloud Infrastructure</p>
+                </div>
+
+                <!-- 6 Stat Metrics Cards Grid -->
+                <section class="stats-grid">
+                    <!-- Stat Card 1: Running EC2 -->
+                    <article class="stat-card">
+                        <div>
+                            <div class="stat-card-header">
+                                <span class="stat-label">Running EC2</span>
+                                <div class="stat-icon emerald">
+                                    <i class="fa-solid fa-server"></i>
+                                </div>
+                            </div>
+                            <div class="stat-value">14</div>
+                        </div>
+                        <div class="stat-footer">
+                            <span class="stat-change up"><i class="fa-solid fa-arrow-up"></i> +2</span>
+                            <span>instances active</span>
+                        </div>
+                    </article>
+
+                    <!-- Stat Card 2: Stopped EC2 -->
+                    <article class="stat-card">
+                        <div>
+                            <div class="stat-card-header">
+                                <span class="stat-label">Stopped EC2</span>
+                                <div class="stat-icon amber">
+                                    <i class="fa-solid fa-power-off"></i>
+                                </div>
+                            </div>
+                            <div class="stat-value">3</div>
+                        </div>
+                        <div class="stat-footer">
+                            <span class="badge badge-warning">Standard Idle</span>
+                        </div>
+                    </article>
+
+                    <!-- Stat Card 3: Total S3 Buckets -->
+                    <article class="stat-card">
+                        <div>
+                            <div class="stat-card-header">
+                                <span class="stat-label">Total S3 Buckets</span>
+                                <div class="stat-icon blue">
+                                    <i class="fa-solid fa-database"></i>
+                                </div>
+                            </div>
+                            <div class="stat-value">28</div>
+                        </div>
+                        <div class="stat-footer">
+                            <span class="stat-change up"><i class="fa-solid fa-arrow-up"></i> +4</span>
+                            <span>new this month</span>
+                        </div>
+                    </article>
+
+                    <!-- Stat Card 4: CPU Usage -->
+                    <article class="stat-card">
+                        <div>
+                            <div class="stat-card-header">
+                                <span class="stat-label">Average CPU Usage</span>
+                                <div class="stat-icon purple">
+                                    <i class="fa-solid fa-microchip"></i>
+                                </div>
+                            </div>
+                            <div class="stat-value">42.5%</div>
+                            <div class="progress-bar-bg">
+                                <div class="progress-bar-fill bg-primary" style="width: 42.5%;"></div>
+                            </div>
+                        </div>
+                        <div class="stat-footer" style="margin-top: 0.5rem;">
+                            <span>Optimal workload threshold</span>
+                        </div>
+                    </article>
+
+                    <!-- Stat Card 5: Storage Used -->
+                    <article class="stat-card">
+                        <div>
+                            <div class="stat-card-header">
+                                <span class="stat-label">Storage Capacity Used</span>
+                                <div class="stat-icon cyan">
+                                    <i class="fa-solid fa-hard-drive"></i>
+                                </div>
+                            </div>
+                            <div class="stat-value">1.42 TB</div>
+                            <div class="progress-bar-bg">
+                                <div class="progress-bar-fill bg-cyan" style="width: 28.4%;"></div>
+                            </div>
+                        </div>
+                        <div class="stat-footer" style="margin-top: 0.5rem;">
+                            <span>28.4% of 5.00 TB quota</span>
+                        </div>
+                    </article>
+
+                    <!-- Stat Card 6: Network Status -->
+                    <article class="stat-card">
+                        <div>
+                            <div class="stat-card-header">
+                                <span class="stat-label">Network Throughput</span>
+                                <div class="stat-icon rose">
+                                    <i class="fa-solid fa-network-wired"></i>
+                                </div>
+                            </div>
+                            <div class="stat-value">1.2 Gbps</div>
+                        </div>
+                        <div class="stat-footer">
+                            <span class="badge badge-success"><i class="fa-solid fa-circle-check"></i> Healthy (0% Packet Loss)</span>
+                        </div>
+                    </article>
+                </section>
+
+                <!-- Section 1: Line Chart & S3 Storage Distribution Grid -->
+                <div class="dashboard-grid-2">
+                    
+                    <!-- Line Chart Placeholder Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 class="card-title">
+                                <i class="fa-solid fa-chart-line" style="color: var(--primary);"></i>
+                                Cluster CPU Utilization & Network Traffic
+                            </h2>
+                            <div class="chart-controls">
+                                <button class="btn-chart-time">1H</button>
+                                <button class="btn-chart-time active">24H</button>
+                                <button class="btn-chart-time">7D</button>
+                                <button class="btn-chart-time">30D</button>
+                            </div>
+                        </div>
+
+                        <!-- SVG Line Chart Visual -->
+                        <svg class="chart-placeholder-svg" viewBox="0 0 500 180">
+                            <!-- Background Grid Lines -->
+                            <line x1="0" y1="30" x2="500" y2="30" stroke="#F3F4F6" stroke-width="1" />
+                            <line x1="0" y1="75" x2="500" y2="75" stroke="#F3F4F6" stroke-width="1" />
+                            <line x1="0" y1="120" x2="500" y2="120" stroke="#F3F4F6" stroke-width="1" />
+                            <line x1="0" y1="165" x2="500" y2="165" stroke="#E5E7EB" stroke-width="1" />
+
+                            <!-- Gradient Fill under curve -->
+                            <defs>
+                                <linearGradient id="chartGradient" x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="0%" stop-color="#2563EB" stop-opacity="0.25"/>
+                                    <stop offset="100%" stop-color="#2563EB" stop-opacity="0.0"/>
+                                </linearGradient>
+                            </defs>
+
+                            <path d="M0,130 Q70,90 140,110 T280,60 T420,80 T500,40 L500,165 L0,165 Z" fill="url(#chartGradient)" />
+                            <path d="M0,130 Q70,90 140,110 T280,60 T420,80 T500,40" fill="none" stroke="#2563EB" stroke-width="3" stroke-linecap="round" />
+
+                            <!-- Data point highlights -->
+                            <circle cx="140" cy="110" r="4" fill="#2563EB" stroke="#FFFFFF" stroke-width="2" />
+                            <circle cx="280" cy="60" r="5" fill="#3B82F6" stroke="#FFFFFF" stroke-width="2" />
+                            <circle cx="420" cy="80" r="4" fill="#2563EB" stroke="#FFFFFF" stroke-width="2" />
+                        </svg>
+
+                        <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;">
+                            <span>00:00</span>
+                            <span>04:00</span>
+                            <span>08:00</span>
+                            <span>12:00</span>
+                            <span>16:00</span>
+                            <span>20:00</span>
+                            <span>Now</span>
+                        </div>
+                    </div>
+
+                    <!-- S3 Storage Breakdown Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 class="card-title">
+                                <i class="fa-solid fa-vault" style="color: #06B6D4;"></i>
+                                S3 Storage Class Breakdown
+                            </h2>
+                        </div>
+
+                        <div class="storage-breakdown-list">
+                            <div class="storage-item">
+                                <div class="storage-item-info">
+                                    <span>Standard Storage</span>
+                                    <span>920 GB (64.7%)</span>
+                                </div>
+                                <div class="progress-bar-bg">
+                                    <div class="progress-bar-fill bg-primary" style="width: 64.7%;"></div>
+                                </div>
+                            </div>
+
+                            <div class="storage-item">
+                                <div class="storage-item-info">
+                                    <span>Glacier Flexible Archive</span>
+                                    <span>340 GB (23.9%)</span>
+                                </div>
+                                <div class="progress-bar-bg">
+                                    <div class="progress-bar-fill bg-cyan" style="width: 23.9%;"></div>
+                                </div>
+                            </div>
+
+                            <div class="storage-item">
+                                <div class="storage-item-info">
+                                    <span>Intelligent-Tiering</span>
+                                    <span>160 GB (11.4%)</span>
+                                </div>
+                                <div class="progress-bar-bg">
+                                    <div class="progress-bar-fill bg-emerald" style="width: 11.4%;"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--card-border); font-size: 0.8rem; color: var(--text-muted); display: flex; justify-content: space-between;">
+                            <span>Total Objects: 1,420,850</span>
+                            <a href="s3.html" style="color: var(--primary); text-decoration: none; font-weight: 600;">Manage S3 &rarr;</a>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 2: EC2 Instance Table & CloudWatch Summary Grid -->
+                <div class="dashboard-grid-2">
+                    
+                    <!-- EC2 Instance Table Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 class="card-title">
+                                <i class="fa-solid fa-server" style="color: var(--primary);"></i>
+                                Active EC2 Instances
+                            </h2>
+                            <a href="ec2.html" style="font-size: 0.85rem; color: var(--primary); font-weight: 600; text-decoration: none;">View All (17) &rarr;</a>
+                        </div>
+
+                        <div class="table-responsive">
+                            <table class="custom-table">
+                                <thead>
+                                    <tr>
+                                        <th>Instance ID</th>
+                                        <th>Instance Name</th>
+                                        <th>Type</th>
+                                        <th>Zone</th>
+                                        <th>Public IP</th>
+                                        <th>State</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><code style="color: var(--primary); font-weight: 600;">i-0a8b9c1d2e3f4a5b6</code></td>
+                                        <td><strong>web-server-prod-01</strong></td>
+                                        <td><span class="badge badge-info">t3.medium</span></td>
+                                        <td>us-east-1a</td>
+                                        <td>54.210.12.44</td>
+                                        <td><span class="badge badge-success"><i class="fa-solid fa-circle"></i> Running</span></td>
+                                        <td>
+                                            <button class="btn-action ec2-action-btn">Stop</button>
+                                            <button class="btn-action ec2-action-btn">Reboot</button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td><code style="color: var(--primary); font-weight: 600;">i-0f9e8d7c6b5a4f3e2</code></td>
+                                        <td><strong>api-gateway-node-02</strong></td>
+                                        <td><span class="badge badge-info">t3.large</span></td>
+                                        <td>us-east-1b</td>
+                                        <td>34.192.88.101</td>
+                                        <td><span class="badge badge-success"><i class="fa-solid fa-circle"></i> Running</span></td>
+                                        <td>
+                                            <button class="btn-action ec2-action-btn">Stop</button>
+                                            <button class="btn-action ec2-action-btn">Reboot</button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td><code style="color: var(--primary); font-weight: 600;">i-0123456789abcdef0</code></td>
+                                        <td><strong>db-replica-postgres</strong></td>
+                                        <td><span class="badge badge-info">r5.xlarge</span></td>
+                                        <td>us-east-1c</td>
+                                        <td>10.0.3.150</td>
+                                        <td><span class="badge badge-success"><i class="fa-solid fa-circle"></i> Running</span></td>
+                                        <td>
+                                            <button class="btn-action ec2-action-btn">Stop</button>
+                                            <button class="btn-action ec2-action-btn">Reboot</button>
+                                        </td>
+                                    </tr>
+                                    <tr>
+                                        <td><code style="color: var(--primary); font-weight: 600;">i-076543210fedcba98</code></td>
+                                        <td><strong>analytics-worker-dev</strong></td>
+                                        <td><span class="badge badge-info">c5.large</span></td>
+                                        <td>us-east-1a</td>
+                                        <td>52.90.114.22</td>
+                                        <td><span class="badge badge-warning"><i class="fa-solid fa-circle"></i> Stopped</span></td>
+                                        <td>
+                                            <button class="btn-action btn-action-primary ec2-action-btn">Start</button>
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- CloudWatch Summary Card -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 class="card-title">
+                                <i class="fa-solid fa-shield-halved" style="color: #F59E0B;"></i>
+                                CloudWatch Alarm Summary
+                            </h2>
+                        </div>
+
+                        <!-- Alarm Counter Boxes -->
+                        <div class="alarm-counter-grid">
+                            <div class="alarm-count-box">
+                                <div class="alarm-count-number" style="color: #10B981;">14</div>
+                                <div class="alarm-count-label">OK STATUS</div>
+                            </div>
+                            <div class="alarm-count-box">
+                                <div class="alarm-count-number" style="color: #EF4444;">1</div>
+                                <div class="alarm-count-label">ALARM STATE</div>
+                            </div>
+                            <div class="alarm-count-box">
+                                <div class="alarm-count-number" style="color: #6B7280;">0</div>
+                                <div class="alarm-count-label">INSUFFICIENT</div>
+                            </div>
+                        </div>
+
+                        <h3 style="font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); margin-bottom: 0.75rem;">Active Triggered Alarms</h3>
+
+                        <div class="active-alarms-list">
+                            <div class="alarm-item">
+                                <div>
+                                    <div class="alarm-item-title">HighCPUUtilization-WebServer01</div>
+                                    <div class="alarm-item-desc">CPU Utilization > 85% for 5 minutes</div>
+                                </div>
+                                <span class="badge badge-danger">TRIGGERED</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 3: Recent Activity Log Table -->
+                <div class="card" style="margin-top: 2rem;">
+                    <div class="card-header">
+                        <h2 class="card-title">
+                            <i class="fa-solid fa-clock-rotate-left" style="color: var(--primary);"></i>
+                            Recent AWS Infrastructure Operations (CloudTrail Logs)
+                        </h2>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="custom-table">
+                            <thead>
+                                <tr>
+                                    <th>Timestamp</th>
+                                    <th>Event Name</th>
+                                    <th>Target Resource</th>
+                                    <th>User / IAM Identity</th>
+                                    <th>Region</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td>2026-08-05 19:42:10</td>
+                                    <td><code>ec2:StartInstances</code></td>
+                                    <td>i-0a8b9c1d2e3f4a5b6</td>
+                                    <td>harsh.admin@cloudops.internal</td>
+                                    <td>us-east-1</td>
+                                    <td><span class="badge badge-success">Success</span></td>
+                                </tr>
+                                <tr>
+                                    <td>2026-08-05 18:15:30</td>
+                                    <td><code>s3:PutBucketPolicy</code></td>
+                                    <td>prod-logs-bucket-01</td>
+                                    <td>harsh.admin@cloudops.internal</td>
+                                    <td>us-east-1</td>
+                                    <td><span class="badge badge-success">Success</span></td>
+                                </tr>
+                                <tr>
+                                    <td>2026-08-05 17:04:12</td>
+                                    <td><code>cloudwatch:PutMetricAlarm</code></td>
+                                    <td>HighCPUUtilization-WebServer01</td>
+                                    <td>cloudwatch-auto-scaler</td>
+                                    <td>us-east-1</td>
+                                    <td><span class="badge badge-success">Success</span></td>
+                                </tr>
+                                <tr>
+                                    <td>2026-08-05 15:22:05</td>
+                                    <td><code>ec2:TerminateInstances</code></td>
+                                    <td>i-054321abcdef6789</td>
+                                    <td>ci-cd-pipeline-service</td>
+                                    <td>us-east-1</td>
+                                    <td><span class="badge badge-success">Success</span></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </main>
+
+            <!-- Application Footer -->
+            <footer class="app-footer">
+                <p>&copy; 2026 Cloud Operations Center. Designed for AWS Infrastructure Management.</p>
+            </footer>
+        </div>
+    </div>
+
+    <!-- Application JavaScript Files -->
+    <script src="js/app.js"></script>
+    <script src="js/dashboard.js"></script>
+</body>
+</html>
