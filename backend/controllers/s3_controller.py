@@ -1,6 +1,4 @@
 from flask import request, jsonify
-from flask_jwt_extended import jwt_required, get_jwt_identity
-from models.user import User
 from services.s3_service import (
     list_buckets_service,
     create_bucket_service,
@@ -15,162 +13,112 @@ from services.s3_service import (
     rename_object_service
 )
 
-def get_current_user():
-    user_id = get_jwt_identity()
-    return User.query.get(user_id)
-
-@jwt_required()
-def list_buckets():
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User session not found.'}), 404
-    data, code = list_buckets_service(user)
+def list_buckets_controller(current_user):
+    account_id = request.args.get('account_id') or request.args.get('aws_account_id') or request.headers.get('X-AWS-Account-ID')
+    data, code = list_buckets_service(current_user, requested_account_id=account_id)
     return jsonify(data), code
 
-@jwt_required()
-def create_bucket():
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User session not found.'}), 404
-
+def create_bucket_controller(current_user):
     payload = request.get_json() or {}
     bucket_name = payload.get('bucket_name')
-    region = payload.get('region')
+    region = payload.get('region') or 'ap-south-1'
+    account_id = payload.get('account_id') or payload.get('aws_account_id') or request.headers.get('X-AWS-Account-ID')
 
-    data, code = create_bucket_service(user, bucket_name, region)
+    data, code = create_bucket_service(current_user, bucket_name, req_region=region, requested_account_id=account_id)
     return jsonify(data), code
 
-@jwt_required()
-def delete_bucket(bucket_name):
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User session not found.'}), 404
-
-    data, code = delete_bucket_service(user, bucket_name)
+def delete_bucket_controller(current_user, bucket_name):
+    account_id = request.args.get('account_id') or request.args.get('aws_account_id') or request.headers.get('X-AWS-Account-ID')
+    data, code = delete_bucket_service(current_user, bucket_name, requested_account_id=account_id)
     return jsonify(data), code
 
-@jwt_required()
-def list_objects(bucket_name):
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User session not found.'}), 404
-
+def list_objects_controller(current_user, bucket_name):
     prefix = request.args.get('prefix', '')
-    data, code = list_objects_service(user, bucket_name, prefix)
+    account_id = request.args.get('account_id') or request.args.get('aws_account_id') or request.headers.get('X-AWS-Account-ID')
+    data, code = list_objects_service(current_user, bucket_name, prefix=prefix, requested_account_id=account_id)
     return jsonify(data), code
 
-@jwt_required()
-def create_folder():
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User session not found.'}), 404
-
+def create_folder_controller(current_user):
     payload = request.get_json() or {}
     bucket_name = payload.get('bucket_name')
     folder_path = payload.get('folder_path')
+    account_id = payload.get('account_id') or payload.get('aws_account_id') or request.headers.get('X-AWS-Account-ID')
 
-    data, code = create_folder_service(user, bucket_name, folder_path)
+    data, code = create_folder_service(current_user, bucket_name, folder_path, requested_account_id=account_id)
     return jsonify(data), code
 
-@jwt_required()
-def upload_object():
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User session not found.'}), 404
-
+def upload_object_controller(current_user):
     if 'file' not in request.files and 'files' not in request.files:
-        return jsonify({'error': 'No file attachment found in request.'}), 400
+        return jsonify({'error': 'No file attachment found in request.', 'code': 'InvalidParameterValue'}), 400
 
     bucket_name = request.form.get('bucket_name')
     prefix = request.form.get('prefix', '')
-    
+    account_id = request.form.get('account_id') or request.form.get('aws_account_id') or request.headers.get('X-AWS-Account-ID')
+
     files = request.files.getlist('files') or ([request.files['file']] if 'file' in request.files else [])
 
     results = []
     for file in files:
         if file and file.filename != '':
             filename = file.filename
-            data, code = upload_object_service(user, bucket_name, file, filename, prefix=prefix)
+            data, code = upload_object_service(current_user, bucket_name, file, filename, prefix=prefix, requested_account_id=account_id)
             if code != 200:
                 return jsonify(data), code
             results.append(data)
 
-    return jsonify({'message': f'Uploaded {len(results)} file(s) successfully.', 'results': results}), 200
+    return jsonify({'message': f'Uploaded {len(results)} file(s) successfully to {bucket_name}.', 'results': results}), 200
 
-@jwt_required()
-def get_presigned_url():
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User session not found.'}), 404
-
+def get_presigned_url_controller(current_user):
     bucket_name = request.args.get('bucket') or request.args.get('bucket_name')
     object_key = request.args.get('key') or request.args.get('object_key')
     expires_in = int(request.args.get('expires_in', 3600))
+    account_id = request.args.get('account_id') or request.args.get('aws_account_id') or request.headers.get('X-AWS-Account-ID')
 
-    data, code = get_presigned_url_service(user, bucket_name, object_key, expires_in=expires_in)
+    data, code = get_presigned_url_service(current_user, bucket_name, object_key, expires_in=expires_in, requested_account_id=account_id)
     return jsonify(data), code
 
-@jwt_required()
-def preview_object():
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User session not found.'}), 404
-
+def preview_object_controller(current_user):
     bucket_name = request.args.get('bucket') or request.args.get('bucket_name')
     object_key = request.args.get('key') or request.args.get('object_key')
+    account_id = request.args.get('account_id') or request.args.get('aws_account_id') or request.headers.get('X-AWS-Account-ID')
 
-    data, code = get_presigned_url_service(user, bucket_name, object_key, expires_in=3600)
+    data, code = get_presigned_url_service(current_user, bucket_name, object_key, expires_in=3600, requested_account_id=account_id)
     return jsonify(data), code
 
-@jwt_required()
-def download_object():
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User session not found.'}), 404
+def download_object_controller(current_user):
+    bucket_name = request.args.get('bucket_name') or request.args.get('bucket')
+    object_key = request.args.get('object_key') or request.args.get('key')
+    account_id = request.args.get('account_id') or request.args.get('aws_account_id') or request.headers.get('X-AWS-Account-ID')
 
-    bucket_name = request.args.get('bucket_name')
-    object_key = request.args.get('object_key')
-
-    res = download_object_service(user, bucket_name, object_key)
+    res = download_object_service(current_user, bucket_name, object_key, requested_account_id=account_id)
     if isinstance(res, tuple):
         data, code = res
         return jsonify(data), code
     return res
 
-@jwt_required()
-def head_object():
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User session not found.'}), 404
+def head_object_controller(current_user):
+    bucket_name = request.args.get('bucket_name') or request.args.get('bucket')
+    object_key = request.args.get('object_key') or request.args.get('key')
+    account_id = request.args.get('account_id') or request.args.get('aws_account_id') or request.headers.get('X-AWS-Account-ID')
 
-    bucket_name = request.args.get('bucket_name')
-    object_key = request.args.get('object_key')
-
-    data, code = head_object_service(user, bucket_name, object_key)
+    data, code = head_object_service(current_user, bucket_name, object_key, requested_account_id=account_id)
     return jsonify(data), code
 
-@jwt_required()
-def delete_object():
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User session not found.'}), 404
+def delete_object_controller(current_user):
+    payload = request.get_json(silent=True) or {}
+    bucket_name = request.args.get('bucket_name') or payload.get('bucket_name')
+    object_key = request.args.get('object_key') or payload.get('object_key')
+    account_id = request.args.get('account_id') or payload.get('account_id') or request.headers.get('X-AWS-Account-ID')
 
-    bucket_name = request.args.get('bucket_name') or (request.get_json() or {}).get('bucket_name')
-    object_key = request.args.get('object_key') or (request.get_json() or {}).get('object_key')
-
-    data, code = delete_object_service(user, bucket_name, object_key)
+    data, code = delete_object_service(current_user, bucket_name, object_key, requested_account_id=account_id)
     return jsonify(data), code
 
-@jwt_required()
-def rename_object():
-    user = get_current_user()
-    if not user:
-        return jsonify({'error': 'User session not found.'}), 404
-
+def rename_object_controller(current_user):
     payload = request.get_json() or {}
     bucket_name = payload.get('bucket_name')
     source_key = payload.get('source_key')
     new_key = payload.get('new_key')
+    account_id = payload.get('account_id') or payload.get('aws_account_id') or request.headers.get('X-AWS-Account-ID')
 
-    data, code = rename_object_service(user, bucket_name, source_key, new_key)
+    data, code = rename_object_service(current_user, bucket_name, source_key, new_key, requested_account_id=account_id)
     return jsonify(data), code

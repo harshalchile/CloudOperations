@@ -60,17 +60,18 @@ def register_socket_events(socketio):
                 host_ip = None
                 for acc in accounts:
                     try:
-                        ec2_client = boto3.client(
-                            'ec2',
-                            aws_access_key_id=acc.get_decrypted_access_key(),
-                            aws_secret_access_key=acc.get_decrypted_secret_key(),
-                            region_name=acc.region or 'us-east-1'
-                        )
-                        res = ec2_client.describe_instances(InstanceIds=[instance_id])
-                        inst = res['Reservations'][0]['Instances'][0]
-                        host_ip = inst.get('PublicIpAddress')
-                        if host_ip:
-                            break
+                        from utils.aws_client_manager import AWSClientManager
+                        ec2_client, region, target_acc, err_c, _ = AWSClientManager.get_client(user, 'ec2', requested_account_id=acc.id)
+                        if ec2_client:
+                            res, _, _ = AWSClientManager.execute_aws_call(
+                                ec2_client, 'ec2', 'describe_instances', target_acc, region, 'describe_instances',
+                                InstanceIds=[instance_id]
+                            )
+                            if res and res.get('Reservations'):
+                                inst = res['Reservations'][0]['Instances'][0]
+                                host_ip = inst.get('PublicIpAddress')
+                                if host_ip:
+                                    break
                     except Exception:
                         continue
 

@@ -11,30 +11,39 @@ import {
   CheckCircle2,
   AlertTriangle,
   ChevronDown,
-  Plus
+  Plus,
+  Trash2,
+  Info,
+  Layers,
+  Server,
+  Database,
+  Activity
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
+import { useNotifications, formatRelativeTime } from '../../context/NotificationContext';
 
 export const Navbar = ({ onOpenCommandPalette, onOpenMobileSidebar }) => {
   const { user, avatarInitial, logout, awsAccounts, selectedAccountId, setSelectedAccountId } = useAuth();
   const { showToast } = useToast();
   const navigate = useNavigate();
 
-  const [selectedRegion, setSelectedRegion] = useState('us-east-1 (N. Virginia)');
-  const [activeDropdown, setActiveDropdown] = useState(null); // null | 'region' | 'notifications' | 'profile'
+  const {
+    notifications,
+    unreadCount,
+    loading: loadingNotifications,
+    resourceFilter,
+    setResourceFilter,
+    markAsRead,
+    markAllAsRead,
+    deleteNotification,
+    clearAll
+  } = useNotifications();
 
-  const [notifications, setNotifications] = useState([
-    { id: 1, title: 'CPU Spike detected on i-0994f8a', time: '4m ago', type: 'warning', link: '/ec2', isRead: false },
-    { id: 2, title: 'S3 Bucket policy updated on prod-cdn', time: '22m ago', type: 'info', link: '/s3', isRead: false },
-    { id: 3, title: 'Auto-scaling cluster expanded +2 nodes', time: '1h ago', type: 'success', link: '/cloudwatch', isRead: false },
-  ]);
-
+  const [activeDropdown, setActiveDropdown] = useState(null); // null | 'account' | 'notifications' | 'profile'
   const navbarRef = useRef(null);
-
-  const unreadCount = notifications.filter((n) => !n.isRead).length;
 
   const toggleDropdown = (name) => {
     setActiveDropdown((prev) => (prev === name ? null : name));
@@ -62,19 +71,17 @@ export const Navbar = ({ onOpenCommandPalette, onOpenMobileSidebar }) => {
     };
   }, []);
 
-  const handleNotificationClick = (notif) => {
-    setNotifications((prev) =>
-      prev.map((n) => (n.id === notif.id ? { ...n, isRead: true } : n))
-    );
-    setActiveDropdown(null);
-    if (notif.link) {
-      navigate(notif.link);
+  const handleNotificationClick = (n) => {
+    if (!n.is_read) {
+      markAsRead(n.id);
     }
-  };
+    setActiveDropdown(null);
 
-  const handleMarkAllRead = () => {
-    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
-    showToast('All notifications marked as read');
+    const rType = (n.resource_type || '').toUpperCase();
+    if (rType === 'EC2') navigate('/ec2');
+    else if (rType === 'S3') navigate('/s3');
+    else if (rType === 'CLOUDWATCH') navigate('/cloudwatch');
+    else if (rType === 'AWS_ACCOUNT') navigate('/aws/accounts');
   };
 
   const handleSignOut = () => {
@@ -84,19 +91,22 @@ export const Navbar = ({ onOpenCommandPalette, onOpenMobileSidebar }) => {
     navigate('/login');
   };
 
-  const regions = [
-    'us-east-1 (N. Virginia)',
-    'us-west-2 (Oregon)',
-    'eu-central-1 (Frankfurt)',
-    'ap-southeast-1 (Singapore)',
-  ];
-
   const dropdownAnimation = {
     initial: { opacity: 0, scale: 0.95, y: -4 },
     animate: { opacity: 1, scale: 1, y: 0 },
     exit: { opacity: 0, scale: 0.95, y: -4 },
     transition: { duration: 0.15, ease: 'easeOut' },
   };
+
+  const filterTabs = [
+    { id: 'ALL', label: 'All' },
+    { id: 'UNREAD', label: 'Unread' },
+    { id: 'EC2', label: 'EC2' },
+    { id: 'S3', label: 'S3' },
+    { id: 'CLOUDWATCH', label: 'CloudWatch' },
+    { id: 'AWS_ACCOUNT', label: 'AWS' },
+    { id: 'AUTH', label: 'Auth' },
+  ];
 
   return (
     <header
@@ -127,7 +137,6 @@ export const Navbar = ({ onOpenCommandPalette, onOpenMobileSidebar }) => {
 
       {/* Right: Region Selector, System Health, Notifications, User Menu */}
       <div className="flex items-center gap-2 sm:gap-3">
-        {/* Region Dropdown */}
         {/* AWS Account Switcher Dropdown */}
         <div className="relative font-mono-tabular">
           <button
@@ -161,7 +170,6 @@ export const Navbar = ({ onOpenCommandPalette, onOpenMobileSidebar }) => {
                   Select Active AWS Account
                 </div>
 
-                {/* All Accounts Option */}
                 <button
                   onClick={() => {
                     setSelectedAccountId('all');
@@ -180,7 +188,6 @@ export const Navbar = ({ onOpenCommandPalette, onOpenMobileSidebar }) => {
 
                 <div className="border-t border-slate-800/80 my-1" />
 
-                {/* Individual Accounts */}
                 {awsAccounts.map((acc) => {
                   const isSelected = String(selectedAccountId) === String(acc.id);
                   return (
@@ -206,7 +213,6 @@ export const Navbar = ({ onOpenCommandPalette, onOpenMobileSidebar }) => {
 
                 <div className="border-t border-slate-800/80 my-1" />
 
-                {/* Add AWS Account Option */}
                 <button
                   onClick={() => {
                     setActiveDropdown(null);
@@ -254,46 +260,135 @@ export const Navbar = ({ onOpenCommandPalette, onOpenMobileSidebar }) => {
             {activeDropdown === 'notifications' && (
               <motion.div
                 {...dropdownAnimation}
-                className="absolute right-0 mt-1 w-80 bg-slate-900 border border-slate-800 rounded-md shadow-2xl py-2 z-50 origin-top-right font-mono-tabular"
+                className="absolute right-0 mt-1 w-96 bg-slate-900 border border-slate-800 rounded-lg shadow-2xl py-2 z-50 origin-top-right font-mono-tabular"
               >
-                <div className="px-3 py-1.5 flex items-center justify-between border-b border-slate-800 text-xs font-semibold text-slate-200">
-                  <span>System Notifications ({unreadCount} unread)</span>
-                  {unreadCount > 0 && (
-                    <button
-                      onClick={handleMarkAllRead}
-                      className="text-[10px] text-blue-400 hover:underline cursor-pointer focus:outline-none"
-                    >
-                      Mark all read
-                    </button>
-                  )}
+                {/* Header */}
+                <div className="px-3 py-2 border-b border-slate-800 flex items-center justify-between text-xs">
+                  <div className="flex items-center gap-1.5 font-bold text-slate-100">
+                    <Bell className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Notifications</span>
+                    <span className="px-1.5 py-0.2 text-[10px] bg-blue-500/20 text-blue-300 border border-blue-500/30 rounded font-mono">
+                      {unreadCount} unread
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    {unreadCount > 0 && (
+                      <button
+                        onClick={markAllAsRead}
+                        className="text-[10px] text-blue-400 hover:underline cursor-pointer"
+                      >
+                        Mark all read
+                      </button>
+                    )}
+                    {notifications.length > 0 && (
+                      <button
+                        onClick={clearAll}
+                        className="text-[10px] text-slate-400 hover:text-rose-400 hover:underline cursor-pointer"
+                      >
+                        Clear all
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="divide-y divide-slate-800/60 max-h-64 overflow-y-auto">
-                  {notifications.map((n) => (
-                    <div
-                      key={n.id}
-                      onClick={() => handleNotificationClick(n)}
-                      className={`p-3 hover:bg-slate-800/70 transition-colors flex items-start gap-2.5 cursor-pointer ${
-                        !n.isRead ? 'bg-blue-600/5' : ''
+
+                {/* Resource Filter Tabs */}
+                <div className="px-2 py-1.5 border-b border-slate-800 flex items-center gap-1 overflow-x-auto text-[10px]">
+                  {filterTabs.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => setResourceFilter(t.id)}
+                      className={`px-2 py-0.5 rounded font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                        resourceFilter === t.id
+                          ? 'bg-blue-600 text-white'
+                          : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
                       }`}
                     >
-                      {n.type === 'warning' ? (
-                        <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                      ) : (
-                        <CheckCircle2 className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
-                      )}
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between gap-1">
-                          <p className={`text-xs ${!n.isRead ? 'font-bold text-white' : 'text-slate-300'}`}>
-                            {n.title}
-                          </p>
-                          {!n.isRead && (
-                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0"></span>
-                          )}
-                        </div>
-                        <span className="text-[10px] text-slate-500">{n.time}</span>
-                      </div>
-                    </div>
+                      {t.label}
+                    </button>
                   ))}
+                </div>
+
+                {/* Notifications List */}
+                <div className="divide-y divide-slate-800/60 max-h-72 overflow-y-auto">
+                  {loadingNotifications ? (
+                    <div className="p-6 text-center text-xs text-slate-500">
+                      Syncing real-time notifications...
+                    </div>
+                  ) : notifications.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-slate-500 flex flex-col items-center gap-1.5">
+                      <Bell className="w-6 h-6 text-slate-600" />
+                      <span>No notifications found.</span>
+                    </div>
+                  ) : (
+                    notifications.map((n) => {
+                      const isUnread = !n.is_read;
+                      const sev = (n.severity || n.type || '').toUpperCase();
+
+                      return (
+                        <div
+                          key={n.id}
+                          onClick={() => handleNotificationClick(n)}
+                          className={`p-3 hover:bg-slate-800/70 transition-colors flex items-start gap-2.5 cursor-pointer relative group ${
+                            isUnread ? 'bg-blue-600/10' : ''
+                          }`}
+                        >
+                          {/* Severity Icon */}
+                          {sev === 'ERROR' ? (
+                            <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                          ) : sev === 'WARNING' ? (
+                            <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                          ) : sev === 'SUCCESS' ? (
+                            <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          ) : (
+                            <Info className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+                          )}
+
+                          <div className="flex-1 min-w-0 space-y-0.5">
+                            <div className="flex items-center justify-between gap-1">
+                              <span className={`text-xs truncate ${isUnread ? 'font-bold text-white' : 'text-slate-200'}`}>
+                                {n.title}
+                              </span>
+                              <div className="flex items-center gap-1 shrink-0">
+                                {isUnread && (
+                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-500"></span>
+                                )}
+                                <span className="text-[10px] text-slate-500">{formatRelativeTime(n.created_at)}</span>
+                              </div>
+                            </div>
+
+                            <p className="text-[11px] text-slate-400 line-clamp-2 leading-relaxed select-text">
+                              {n.message}
+                            </p>
+
+                            {/* Resource & Account Tags */}
+                            <div className="flex items-center gap-1.5 pt-1 text-[9px] font-mono">
+                              <span className="px-1.5 py-0.2 bg-slate-800 text-slate-300 rounded border border-slate-700/60 font-semibold uppercase">
+                                {n.resource_type}
+                              </span>
+                              {n.aws_account_name && (
+                                <span className="px-1.5 py-0.2 bg-blue-500/10 text-blue-300 rounded border border-blue-500/20 truncate max-w-[140px]">
+                                  {n.aws_account_name}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Delete Item Button */}
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              deleteNotification(n.id);
+                            }}
+                            className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition-opacity"
+                            title="Delete Notification"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </motion.div>
             )}
@@ -309,10 +404,13 @@ export const Navbar = ({ onOpenCommandPalette, onOpenMobileSidebar }) => {
             }`}
             title="User Profile Menu"
           >
-            {/* Requirement 2: Displays ONLY ONE character dynamically generated from user name */}
-            <div className="w-7 h-7 rounded-full bg-blue-600/20 border border-blue-500/40 flex items-center justify-center text-blue-400 text-xs font-bold font-mono-tabular">
+            <div className="w-7 h-7 rounded-full bg-blue-600/30 border border-blue-500/40 text-blue-300 font-bold text-xs flex items-center justify-center font-mono-tabular">
               {avatarInitial}
             </div>
+            <span className="text-xs font-semibold text-slate-200 hidden md:inline-block max-w-[100px] truncate">
+              {user?.name || 'Administrator'}
+            </span>
+            <ChevronDown className="w-3.5 h-3.5 text-slate-400 hidden sm:inline-block" />
           </button>
 
           <AnimatePresence>
@@ -322,54 +420,28 @@ export const Navbar = ({ onOpenCommandPalette, onOpenMobileSidebar }) => {
                 className="absolute right-0 mt-1 w-56 bg-slate-900 border border-slate-800 rounded-md shadow-2xl py-1 z-50 origin-top-right font-mono-tabular"
               >
                 <div className="px-3 py-2 border-b border-slate-800">
-                  <p className="text-xs font-semibold text-white">{user?.name || 'Harsh Ops'}</p>
-                  <p className="text-[11px] text-slate-400 truncate">{user?.email || 'harsh@cloudops.internal'}</p>
+                  <p className="text-xs font-bold text-slate-100 truncate">{user?.name}</p>
+                  <p className="text-[10px] text-slate-400 truncate">{user?.email}</p>
                 </div>
 
-                {/* Requirement 3: Profile -> /profile */}
                 <button
                   onClick={() => {
                     setActiveDropdown(null);
                     navigate('/profile');
                   }}
-                  className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 flex items-center gap-2 transition-colors focus:bg-slate-800 focus:outline-none"
+                  className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 hover:text-white flex items-center gap-2 cursor-pointer transition-colors"
                 >
-                  <User className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Profile</span>
+                  <User className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Profile & Security</span>
                 </button>
 
-                {/* Requirement 3: AWS Account -> /settings?tab=aws */}
-                <button
-                  onClick={() => {
-                    setActiveDropdown(null);
-                    navigate('/settings?tab=aws');
-                  }}
-                  className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 flex items-center gap-2 transition-colors focus:bg-slate-800 focus:outline-none"
-                >
-                  <Key className="w-3.5 h-3.5 text-slate-400" />
-                  <span>AWS Account</span>
-                </button>
+                <div className="border-t border-slate-800/80 my-1" />
 
-                {/* Requirement 3: Security -> /settings?tab=security */}
-                <button
-                  onClick={() => {
-                    setActiveDropdown(null);
-                    navigate('/settings?tab=security');
-                  }}
-                  className="w-full text-left px-3 py-2 text-xs text-slate-300 hover:bg-slate-800 flex items-center gap-2 transition-colors focus:bg-slate-800 focus:outline-none"
-                >
-                  <Shield className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Security</span>
-                </button>
-
-                <div className="border-t border-slate-800 my-1"></div>
-
-                {/* Requirement 3: Sign Out -> clear session and redirect to Login */}
                 <button
                   onClick={handleSignOut}
-                  className="w-full text-left px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/10 flex items-center gap-2 transition-colors focus:bg-rose-500/10 focus:outline-none"
+                  className="w-full text-left px-3 py-2 text-xs text-rose-400 hover:bg-rose-500/10 flex items-center gap-2 cursor-pointer transition-colors"
                 >
-                  <LogOut className="w-3.5 h-3.5" />
+                  <LogOut className="w-3.5 h-3.5 text-rose-400" />
                   <span>Sign Out</span>
                 </button>
               </motion.div>
@@ -380,3 +452,5 @@ export const Navbar = ({ onOpenCommandPalette, onOpenMobileSidebar }) => {
     </header>
   );
 };
+
+export default Navbar;

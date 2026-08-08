@@ -25,7 +25,6 @@ export const Sidebar = ({ isCollapsed, toggleSidebar, mobileOpen, closeMobile })
     { label: 'EC2 Virtual Servers', icon: Server, path: '/ec2', badge: 'Boto3' },
     { label: 'S3 Storage Buckets', icon: HardDrive, path: '/s3', badge: 'Active' },
     { label: 'CloudWatch Telemetry', icon: Activity, path: '/cloudwatch', badge: null },
-    { label: 'AWS Diagnostics', icon: ShieldCheck, path: '/diagnostics', badge: 'Audit' },
     { label: 'AWS Accounts', icon: Building2, path: '/aws/accounts', badge: 'Multi' },
   ];
 

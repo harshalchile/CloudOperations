@@ -11,12 +11,12 @@ const api = axios.create({
 // Interceptor for JWT Authorization & Active AWS Account Headers
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem('authToken');
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    const token = localStorage.getItem('access_token') || localStorage.getItem('authToken');
+    if (token && token !== 'null' && token !== 'undefined' && token.trim() !== '') {
+      config.headers.Authorization = `Bearer ${token.trim()}`;
     }
     const selectedAccountId = localStorage.getItem('selectedAccountId');
-    if (selectedAccountId) {
+    if (selectedAccountId && selectedAccountId !== 'null' && selectedAccountId !== 'undefined') {
       config.headers['X-AWS-Account-ID'] = selectedAccountId;
     }
     return config;
@@ -24,13 +24,30 @@ api.interceptors.request.use(
   (error) => Promise.reject(error)
 );
 
-// Interceptor for Handling Auth Errors (401)
+// Interceptor for Handling Auth Errors (401 Unauthorized)
 api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response && error.response.status === 401) {
-      localStorage.removeItem('authToken');
-      localStorage.removeItem('user');
+      // Clear all session & cache keys on 401 Unauthorized
+      const sessionKeys = [
+        'access_token',
+        'authToken',
+        'user',
+        'cached_user',
+        'selectedAccountId',
+        'aws_accounts',
+        'active_account',
+        'dashboard_cache',
+        'refresh_token'
+      ];
+      sessionKeys.forEach((key) => {
+        localStorage.removeItem(key);
+        sessionStorage.removeItem(key);
+      });
+
+      // Dispatch global unauthorized event for AuthContext to sync state
+      window.dispatchEvent(new CustomEvent('auth-unauthorized'));
     }
     return Promise.reject(error);
   }

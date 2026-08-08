@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Copy,
@@ -16,7 +16,8 @@ import {
   Lock,
   Unlock,
   RefreshCw,
-  Info
+  Info,
+  Loader2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '../../context/ToastContext';
@@ -29,26 +30,97 @@ export const EC2ConnectModal = ({ isOpen, onClose, instance, onOpenTerminal }) =
   const [username, setUsername] = useState('ec2-user');
   const [copiedField, setCopiedField] = useState(null);
 
-  // Windows Password Decryption State
+  // Windows Password Decryption & Polling State
   const [pemKey, setPemKey] = useState('');
   const [loadingPassword, setLoadingPassword] = useState(false);
   const [windowsPassword, setWindowsPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [passwordError, setPasswordError] = useState('');
-  const [hasPasswordData, setHasPasswordData] = useState(true);
+  const [hasPasswordData, setHasPasswordData] = useState(false);
+  const [isPolling, setIsPolling] = useState(false);
+  const [pollCount, setPollCount] = useState(0);
 
-  if (!isOpen || !instance) return null;
+  const pollTimerRef = useRef(null);
 
-  const isWindows = instance.os && instance.os.toLowerCase().includes('windows');
-  const hasPublicIp = instance.public_ip && instance.public_ip !== 'N/A';
+  const isWindows = instance?.os && instance.os.toLowerCase().includes('windows');
+  const hasPublicIp = instance?.public_ip && instance.public_ip !== 'N/A';
   const defaultUsername = isWindows
     ? 'Administrator'
-    : instance.os && instance.os.toLowerCase().includes('ubuntu')
+    : instance?.os && instance.os.toLowerCase().includes('ubuntu')
     ? 'ubuntu'
     : 'ec2-user';
 
-  const keyPairName = instance.key_name && instance.key_name !== 'N/A' ? `${instance.key_name}.pem` : 'key.pem';
-  const sshCommand = `ssh -i "${keyPairName}" ${username || defaultUsername}@${instance.public_ip}`;
+  const keyPairName = instance?.key_name && instance.key_name !== 'N/A' ? `${instance.key_name}.pem` : 'key.pem';
+  const sshCommand = `ssh -i "${keyPairName}" ${username || defaultUsername}@${instance?.public_ip}`;
+
+  const checkPasswordData = async (activePemKey = pemKey, currentAttempt = 1) => {
+    if (!instance) return;
+    setLoadingPassword(true);
+    setPasswordError('');
+
+    try {
+      const res = await api.post('/ec2/windows-password', {
+        instance_id: instance.instance_id,
+        pem_key: activePemKey
+      });
+
+      if (res.data) {
+        if (!res.data.has_password) {
+          setHasPasswordData(false);
+          setPasswordError(res.data.message || 'Windows password is still being generated. Please wait.');
+          
+          // Poll every 15s for up to 10 minutes (40 attempts)
+          if (currentAttempt < 40) {
+            setIsPolling(true);
+            setPollCount(currentAttempt);
+            pollTimerRef.current = setTimeout(() => {
+              checkPasswordData(activePemKey, currentAttempt + 1);
+            }, 15000);
+          } else {
+            setIsPolling(false);
+            setPasswordError('Password generation timed out after 10 minutes. Please check AWS Console.');
+          }
+        } else {
+          setHasPasswordData(true);
+          setIsPolling(false);
+          if (res.data.decryption_error) {
+            setPasswordError(res.data.decryption_error);
+          } else if (res.data.decrypted_password) {
+            setWindowsPassword(res.data.decrypted_password);
+            showToast('Windows Administrator password decrypted successfully!', 'success');
+          }
+        }
+      }
+    } catch (err) {
+      const msg = err.response?.data?.error || err.response?.data?.message || err.message || 'Failed to fetch password from AWS EC2.';
+      setPasswordError(msg);
+      setIsPolling(false);
+    } finally {
+      setLoadingPassword(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      if (isWindows) {
+        setActiveTab('rdp');
+        setWindowsPassword('');
+        setPasswordError('');
+        setPollCount(0);
+        checkPasswordData(pemKey, 1);
+      } else {
+        setActiveTab('eic');
+      }
+    }
+
+    return () => {
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+      }
+    };
+  }, [isOpen, instance?.instance_id, isWindows]);
+
+  if (!isOpen || !instance) return null;
 
   const handleCopy = (text, fieldName) => {
     if (!text) return;
@@ -64,43 +136,17 @@ export const EC2ConnectModal = ({ isOpen, onClose, instance, onOpenTerminal }) =
 
     const reader = new FileReader();
     reader.onload = (event) => {
-      setPemKey(event.target.result);
+      const loadedKey = event.target.result;
+      setPemKey(loadedKey);
       showToast(`Loaded key file "${file.name}"`);
+      checkPasswordData(loadedKey, 1);
     };
     reader.readAsText(file);
   };
 
-  const handleDecryptPassword = async () => {
-    setLoadingPassword(true);
-    setPasswordError('');
-    setWindowsPassword('');
-
-    try {
-      const res = await api.post('/ec2/windows-password', {
-        instance_id: instance.instance_id,
-        pem_key: pemKey
-      });
-
-      if (res.data) {
-        if (!res.data.has_password) {
-          setHasPasswordData(false);
-          setPasswordError(res.data.message || 'Password is not available for this Windows instance.');
-        } else if (res.data.decryption_error) {
-          setPasswordError(res.data.decryption_error);
-        } else if (res.data.decrypted_password) {
-          setWindowsPassword(res.data.decrypted_password);
-          showToast('Windows Administrator password decrypted successfully!', 'success');
-        } else {
-          setPasswordError('Password data is encrypted. Please paste or upload your private RSA key (.pem) to decrypt.');
-        }
-      }
-    } catch (err) {
-      const msg = err.response?.data?.error || 'Failed to fetch password from AWS EC2.';
-      setPasswordError(msg);
-      showToast(msg, 'error');
-    } finally {
-      setLoadingPassword(false);
-    }
+  const handleDecryptClick = () => {
+    if (pollTimerRef.current) clearTimeout(pollTimerRef.current);
+    checkPasswordData(pemKey, 1);
   };
 
   const handleDownloadRdp = async () => {
@@ -118,8 +164,8 @@ export const EC2ConnectModal = ({ isOpen, onClose, instance, onOpenTerminal }) =
         URL.revokeObjectURL(url);
         showToast(`Downloaded RDP file for ${instance.name}`);
       } else {
-        // Fallback client side generator
-        const fallbackRdp = `full address:s:${instance.public_ip}:3389\nusername:s:Administrator\nprompt for credentials:i:1\nadministrative session:i:1\n`;
+        const host = instance.public_dns && instance.public_dns !== 'N/A' ? instance.public_dns : instance.public_ip;
+        const fallbackRdp = `full address:s:${host}:3389\nusername:s:Administrator\nprompt for credentials:i:1\nadministrative session:i:1\ndesktopwidth:i:1920\ndesktopheight:i:1080\nsession bpp:i:32\nscreen mode id:i:2\n`;
         const blob = new Blob([fallbackRdp], { type: 'application/x-rdp' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -132,7 +178,8 @@ export const EC2ConnectModal = ({ isOpen, onClose, instance, onOpenTerminal }) =
         showToast(`Downloaded RDP file for ${instance.name}`);
       }
     } catch (err) {
-      showToast('Failed to generate RDP file', 'error');
+      const errorMsg = err.response?.data?.error || 'Failed to generate RDP file.';
+      showToast(errorMsg, 'error');
     }
   };
 
@@ -302,18 +349,31 @@ export const EC2ConnectModal = ({ isOpen, onClose, instance, onOpenTerminal }) =
           {/* TAB 3: WINDOWS RDP & PASSWORD DECRYPTION */}
           {isWindows && (
             <div className="space-y-4 text-xs">
+              {/* Status Polling Banner */}
+              {isPolling && (
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-lg text-amber-300 text-xs flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="w-4 h-4 text-amber-400 animate-spin shrink-0" />
+                    <span className="font-semibold">Windows password is still being generated. Please wait...</span>
+                  </div>
+                  <span className="text-[10px] text-amber-400 font-mono font-bold">Attempt {pollCount}/40</span>
+                </div>
+              )}
+
               {/* Credentials Info Grid */}
               <div className="grid grid-cols-2 gap-3 bg-slate-900/60 p-3.5 rounded-lg border border-slate-800">
                 <div>
-                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Public IP</span>
+                  <span className="text-slate-500 block text-[10px] uppercase font-bold">Public Host / IP</span>
                   <div className="flex items-center justify-between mt-0.5">
-                    <span className="text-emerald-400 font-bold">{instance.public_ip}</span>
+                    <span className="text-emerald-400 font-bold truncate">
+                      {instance.public_dns && instance.public_dns !== 'N/A' ? instance.public_dns : instance.public_ip}
+                    </span>
                     <button
-                      onClick={() => handleCopy(instance.public_ip, 'Public IP')}
-                      className="p-1 text-slate-400 hover:text-white"
-                      title="Copy IP"
+                      onClick={() => handleCopy(instance.public_dns && instance.public_dns !== 'N/A' ? instance.public_dns : instance.public_ip, 'Host Address')}
+                      className="p-1 text-slate-400 hover:text-white shrink-0"
+                      title="Copy Address"
                     >
-                      {copiedField === 'Public IP' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copiedField === 'Host Address' ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
                     </button>
                   </div>
                 </div>
@@ -342,7 +402,7 @@ export const EC2ConnectModal = ({ isOpen, onClose, instance, onOpenTerminal }) =
                   </label>
                   <label className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-semibold cursor-pointer flex items-center gap-1">
                     <Upload className="w-3 h-3 text-blue-400" />
-                    <span>Upload PEM File</span>
+                    <span>Upload Key ({instance.key_name || 'PEM'})</span>
                     <input type="file" accept=".pem,.txt" onChange={handleFileUpload} className="hidden" />
                   </label>
                 </div>
@@ -351,17 +411,17 @@ export const EC2ConnectModal = ({ isOpen, onClose, instance, onOpenTerminal }) =
                   rows={3}
                   value={pemKey}
                   onChange={(e) => setPemKey(e.target.value)}
-                  placeholder="Paste contents of your private key file (.pem)..."
+                  placeholder={`Paste contents of your private key file (${instance.key_name || 'key'}.pem)...`}
                   className="w-full p-2.5 bg-slate-950 border border-slate-800 rounded-lg text-slate-200 font-mono text-[11px] focus:outline-none focus:border-blue-500"
                 />
 
                 <button
-                  onClick={handleDecryptPassword}
+                  onClick={handleDecryptClick}
                   disabled={loadingPassword}
                   className="w-full py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold rounded-lg shadow flex items-center justify-center gap-2 cursor-pointer transition-colors"
                 >
                   <Key className={`w-4 h-4 ${loadingPassword ? 'animate-spin' : ''}`} />
-                  <span>{loadingPassword ? 'Decrypting via AWS EC2 API...' : 'Decrypt Windows Password'}</span>
+                  <span>{loadingPassword ? 'Fetching AWS PasswordData...' : 'Decrypt Windows Password'}</span>
                 </button>
 
                 {/* Password Result or Error */}
@@ -411,7 +471,7 @@ export const EC2ConnectModal = ({ isOpen, onClose, instance, onOpenTerminal }) =
                   className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 cursor-pointer transition-colors"
                 >
                   <Download className="w-4 h-4" />
-                  <span>Download RDP Connection File</span>
+                  <span>Download RDP Connection File (.rdp)</span>
                 </button>
               </div>
             </div>

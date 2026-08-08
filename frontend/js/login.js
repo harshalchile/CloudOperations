@@ -1,7 +1,4 @@
-/* 
- * Cloud Operations Center - Login JavaScript (login.js)
- * Handles interactive password toggle and client-side form demo behavior.
- */
+
 
 document.addEventListener('DOMContentLoaded', () => {
     const loginForm = document.getElementById('login-form');

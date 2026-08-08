@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { PageHeader } from '../../components/layout/PageHeader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
@@ -18,38 +18,71 @@ export const ProfilePage = () => {
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
 
+  useEffect(() => {
+    if (user) {
+      setName(user.name || '');
+      setEmail(user.email || '');
+    }
+  }, [user]);
+
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
+    if (isUpdatingProfile) return;
+
+    if (!name.trim() || !email.trim()) {
+      showToast('Name and Email cannot be empty.', 'warning');
+      return;
+    }
+
     setIsUpdatingProfile(true);
-
-    const res = await updateProfile(name, email);
-    setIsUpdatingProfile(false);
-
-    if (res.success) {
-      showToast(res.message || 'Profile updated successfully');
-    } else {
-      showToast(res.error || 'Failed to update profile', 'error');
+    try {
+      const res = await updateProfile(name.trim(), email.trim());
+      if (res.success) {
+        showToast(res.message || 'Profile updated successfully.', 'success');
+      } else {
+        showToast(res.error || 'Failed to update profile.', 'error');
+      }
+    } catch (err) {
+      showToast('An unexpected error occurred while updating profile.', 'error');
+    } finally {
+      setIsUpdatingProfile(false);
     }
   };
 
   const handleChangePassword = async (e) => {
     e.preventDefault();
+    if (isChangingPassword) return;
+
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      showToast('All password fields are required.', 'warning');
+      return;
+    }
+
     if (newPassword !== confirmPassword) {
       showToast('New passwords do not match.', 'warning');
       return;
     }
 
-    setIsChangingPassword(true);
-    const res = await changePassword(currentPassword, newPassword);
-    setIsChangingPassword(false);
+    if (newPassword.length < 6) {
+      showToast('New password must be at least 6 characters long.', 'warning');
+      return;
+    }
 
-    if (res.success) {
-      showToast(res.message || 'Password changed successfully');
-      setCurrentPassword('');
-      setNewPassword('');
-      setConfirmPassword('');
-    } else {
-      showToast(res.error || 'Failed to change password', 'error');
+    setIsChangingPassword(true);
+    try {
+      const res = await changePassword(currentPassword, newPassword);
+      if (res.success) {
+        showToast(res.message || 'Password changed successfully.', 'success');
+        setCurrentPassword('');
+        setNewPassword('');
+        setConfirmPassword('');
+      } else {
+        showToast(res.error || 'Failed to change password.', 'error');
+      }
+    } catch (err) {
+      showToast('An unexpected error occurred while changing password.', 'error');
+    } finally {
+      setIsChangingPassword(false);
     }
   };
 
@@ -69,7 +102,7 @@ export const ProfilePage = () => {
           </div>
           <div>
             <h3 className="text-base font-bold text-white">{user?.name || 'User'}</h3>
-            <p className="text-xs text-slate-400">{user?.email || 'admin@cloudops.internal'}</p>
+            <p className="text-xs text-slate-400">{user?.email || 'N/A'}</p>
             <span className="mt-1.5 inline-block px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded text-[10px] font-semibold uppercase">
               Registered Platform User
             </span>
@@ -113,7 +146,8 @@ export const ProfilePage = () => {
                 required
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-blue-500 font-mono-tabular"
+                placeholder="Full Name"
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-blue-500 font-mono-tabular select-text"
               />
             </div>
 
@@ -124,17 +158,27 @@ export const ProfilePage = () => {
                 required
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-blue-500 font-mono-tabular"
+                placeholder="name@company.com"
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-blue-500 font-mono-tabular select-text"
               />
             </div>
 
             <button
               type="submit"
               disabled={isUpdatingProfile}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold shadow transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded text-xs font-semibold shadow transition-colors disabled:opacity-50 cursor-pointer"
             >
-              {isUpdatingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              <span>Save Profile</span>
+              {isUpdatingProfile ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  <span>Save Profile</span>
+                </>
+              )}
             </button>
           </form>
         </div>
@@ -154,7 +198,8 @@ export const ProfilePage = () => {
                 required
                 value={currentPassword}
                 onChange={(e) => setCurrentPassword(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-blue-500 font-mono-tabular"
+                placeholder="Enter current password"
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-blue-500 font-mono-tabular select-text"
               />
             </div>
 
@@ -165,7 +210,8 @@ export const ProfilePage = () => {
                 required
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-blue-500 font-mono-tabular"
+                placeholder="Enter new password (min 6 chars)"
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-blue-500 font-mono-tabular select-text"
               />
             </div>
 
@@ -176,17 +222,27 @@ export const ProfilePage = () => {
                 required
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-blue-500 font-mono-tabular"
+                placeholder="Confirm new password"
+                className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-slate-100 focus:outline-none focus:border-blue-500 font-mono-tabular select-text"
               />
             </div>
 
             <button
               type="submit"
               disabled={isChangingPassword}
-              className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs font-semibold shadow transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded text-xs font-semibold shadow transition-colors disabled:opacity-50 cursor-pointer"
             >
-              {isChangingPassword ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
-              <span>Change Password</span>
+              {isChangingPassword ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Updating...</span>
+                </>
+              ) : (
+                <>
+                  <Key className="w-4 h-4" />
+                  <span>Change Password</span>
+                </>
+              )}
             </button>
           </form>
         </div>
@@ -194,3 +250,5 @@ export const ProfilePage = () => {
     </div>
   );
 };
+
+export default ProfilePage;

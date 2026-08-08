@@ -1,56 +1,71 @@
 import boto3
+import logging
 from datetime import datetime, timedelta, timezone
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import ClientError
+from models.user import db
+from models.s3_watch import S3StorageWatch
+from models.alarm_state import AlarmStateTrack
 from services.aws_service import get_target_aws_accounts
-from utils.aws_audit import log_aws_call, extract_client_error, verify_sts_identity
+from services.notification_service import create_notification
+from utils.aws_client_manager import AWSClientManager
 
-def get_cloudwatch_client_for_account(acc):
-    """Instantiates a boto3 CloudWatch client for a given AWSAccount instance after verifying STS caller identity."""
-    identity, sts_err, status_code = verify_sts_identity(acc)
-    if sts_err:
-        return None, acc.region, sts_err.get('error')
+logger = logging.getLogger("cloudwatch_service")
 
-    try:
-        client = boto3.client(
-            'cloudwatch',
-            aws_access_key_id=acc.get_decrypted_access_key(),
-            aws_secret_access_key=acc.get_decrypted_secret_key(),
-            region_name=acc.region or 'us-east-1'
-        )
-        return client, acc.region, None
-    except Exception as e:
-        return None, acc.region, str(e)
+DEFAULT_REGION = 'ap-south-1'
 
 
-def get_logs_client_for_account(acc):
-    """Instantiates a boto3 CloudWatch Logs client for a given AWSAccount instance after verifying STS caller identity."""
-    identity, sts_err, status_code = verify_sts_identity(acc)
-    if sts_err:
-        return None, acc.region, sts_err.get('error')
+def resolve_time_range_params(time_range):
+    now = datetime.now(timezone.utc)
+    tr = str(time_range).lower() if time_range else '1h'
 
-    try:
-        client = boto3.client(
-            'logs',
-            aws_access_key_id=acc.get_decrypted_access_key(),
-            aws_secret_access_key=acc.get_decrypted_secret_key(),
-            region_name=acc.region or 'us-east-1'
-        )
-        return client, acc.region, None
-    except Exception as e:
-        return None, acc.region, str(e)
+    if tr == '5m':
+        start_time = now - timedelta(minutes=5)
+        period = 60
+    elif tr == '15m':
+        start_time = now - timedelta(minutes=15)
+        period = 60
+    elif tr == '1h':
+        start_time = now - timedelta(hours=1)
+        period = 60
+    elif tr == '3h':
+        start_time = now - timedelta(hours=3)
+        period = 300
+    elif tr == '6h':
+        start_time = now - timedelta(hours=6)
+        period = 300
+    elif tr == '12h':
+        start_time = now - timedelta(hours=12)
+        period = 900
+    elif tr == '24h':
+        start_time = now - timedelta(hours=24)
+        period = 900
+    elif tr == '7d':
+        start_time = now - timedelta(days=7)
+        period = 3600
+    else:
+        start_time = now - timedelta(hours=1)
+        period = 60
+
+    return start_time, now, period
 
 
-def get_cloudwatch_dashboard_stats_service(user):
-    """
-    Returns CloudWatch summary statistics across target AWS accounts:
-    - Total Alarms
-    - Alarms in ALARM state
-    - Alarms in OK state
-    - Number of Log Groups
-    - Total Metrics
-    - Last AWS API Sync Time
-    """
-    accounts = get_target_aws_accounts(user)
+METRIC_CONFIG = {
+    'CPUUtilization': {'stat': 'Average', 'unit': 'Percent', 'label': 'CPU Utilization'},
+    'NetworkIn': {'stat': 'Sum', 'unit': 'Bytes', 'label': 'Network In'},
+    'NetworkOut': {'stat': 'Sum', 'unit': 'Bytes', 'label': 'Network Out'},
+    'DiskReadBytes': {'stat': 'Sum', 'unit': 'Bytes', 'label': 'Disk Read'},
+    'DiskWriteBytes': {'stat': 'Sum', 'unit': 'Bytes', 'label': 'Disk Write'},
+    'DiskReadOps': {'stat': 'Sum', 'unit': 'Count', 'label': 'Disk Read Ops'},
+    'DiskWriteOps': {'stat': 'Sum', 'unit': 'Count', 'label': 'Disk Write Ops'},
+    'StatusCheckFailed': {'stat': 'Maximum', 'unit': 'Count', 'label': 'Status Check Failed'},
+    'StatusCheckFailed_System': {'stat': 'Maximum', 'unit': 'Count', 'label': 'System Status Check Failed'},
+    'StatusCheckFailed_Instance': {'stat': 'Maximum', 'unit': 'Count', 'label': 'Instance Status Check Failed'},
+}
+
+
+def get_cloudwatch_dashboard_stats_service(user, requested_account_id=None):
+    """Returns top-level CloudWatch summary stats strictly for EC2 & S3."""
+    accounts = get_target_aws_accounts(user, requested_account_id=requested_account_id)
     now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
 
     if not accounts:
@@ -59,523 +74,762 @@ def get_cloudwatch_dashboard_stats_service(user):
             'alarms_in_alarm': 0,
             'alarms_in_ok': 0,
             'alarms_insufficient_data': 0,
-            'total_log_groups': 0,
-            'total_metrics': 0,
+            'total_s3_watches': 0,
+            's3_watches_exceeded': 0,
             'last_sync_time': now_iso,
             'accounts_count': 0
         }, 200
 
-    total_alarms = 0
-    alarms_in_alarm = 0
-    alarms_in_ok = 0
-    alarms_insufficient = 0
-    total_log_groups = 0
-    total_metrics = 0
-    errors = []
+    alarms_res, _ = list_ec2_alarms_service(user, requested_account_id=requested_account_id)
+    alarms = alarms_res.get('alarms', [])
 
-    for acc in accounts:
-        cw_client, region, err = get_cloudwatch_client_for_account(acc)
-        if cw_client:
-            try:
-                res_a = cw_client.describe_alarms()
-                alarms = res_a.get('MetricAlarms', [])
-                total_alarms += len(alarms)
-                for a in alarms:
-                    state = a.get('StateValue')
-                    if state == 'ALARM':
-                        alarms_in_alarm += 1
-                    elif state == 'OK':
-                        alarms_in_ok += 1
-                    else:
-                        alarms_insufficient += 1
-            except Exception as e:
-                errors.append(f"Alarms error ({acc.account_name}): {str(e)}")
+    in_alarm = sum(1 for a in alarms if a.get('state_value') == 'ALARM')
+    in_ok = sum(1 for a in alarms if a.get('state_value') == 'OK')
+    in_insufficient = sum(1 for a in alarms if a.get('state_value') == 'INSUFFICIENT_DATA')
 
-            try:
-                res_m = cw_client.list_metrics()
-                total_metrics += len(res_m.get('Metrics', []))
-            except Exception as e:
-                errors.append(f"Metrics error ({acc.account_name}): {str(e)}")
-
-        logs_client, region, err_l = get_logs_client_for_account(acc)
-        if logs_client:
-            try:
-                res_l = logs_client.describe_log_groups()
-                total_log_groups += len(res_l.get('logGroups', []))
-            except Exception as e:
-                errors.append(f"Log Groups error ({acc.account_name}): {str(e)}")
+    watches_res, _ = list_s3_watches_service(user, requested_account_id=requested_account_id)
+    watches = watches_res.get('watches', [])
+    s3_exceeded = sum(1 for w in watches if w.get('last_state') == 'EXCEEDED')
 
     return {
-        'total_alarms': total_alarms,
-        'alarms_in_alarm': alarms_in_alarm,
-        'alarms_in_ok': alarms_in_ok,
-        'alarms_insufficient_data': alarms_insufficient,
-        'total_log_groups': total_log_groups,
-        'total_metrics': total_metrics,
+        'total_alarms': len(alarms),
+        'alarms_in_alarm': in_alarm,
+        'alarms_in_ok': in_ok,
+        'alarms_insufficient_data': in_insufficient,
+        'total_s3_watches': len(watches),
+        's3_watches_exceeded': s3_exceeded,
         'last_sync_time': now_iso,
-        'accounts_count': len(accounts),
-        'errors': errors
+        'accounts_count': len(accounts)
     }, 200
 
 
-def list_alarms_service(user, state_filter=None):
-    """Lists all CloudWatch Metric Alarms with optional state filtering (ALARM, OK, INSUFFICIENT_DATA)."""
-    accounts = get_target_aws_accounts(user)
+def fetch_single_instance_metric(cw_client, target_acc, region, instance_id, metric_name, start_time, end_time, period, time_range):
+    cfg = METRIC_CONFIG.get(metric_name, {'stat': 'Average', 'unit': 'Count', 'label': metric_name})
+    stat_key = cfg['stat']
+
+    kwargs = {
+        'Namespace': 'AWS/EC2',
+        'MetricName': metric_name,
+        'Dimensions': [{'Name': 'InstanceId', 'Value': instance_id}],
+        'StartTime': start_time,
+        'EndTime': end_time,
+        'Period': period,
+        'Statistics': [stat_key]
+    }
+
+    res, err_call, _ = AWSClientManager.execute_aws_call(
+        cw_client, 'cloudwatch', 'get_metric_statistics', target_acc, region, 'get_metric_statistics',
+        **kwargs
+    )
+
+    if err_call and target_acc and hasattr(target_acc, 'user_id'):
+        err_msg = err_call.get('aws_error_message') or err_call.get('error')
+        create_notification(
+            user_id=target_acc.user_id,
+            notif_type='ERROR',
+            title='CloudWatch API Error',
+            message=f'Unable to retrieve CloudWatch metrics for instance {instance_id}: {err_msg}',
+            severity='ERROR',
+            resource_type='CLOUDWATCH',
+            resource_id=instance_id,
+            aws_account_id=target_acc.id
+        )
+
+    datapoints = []
+    latest_val = None
+    min_val = None
+    max_val = None
+    avg_val = None
+
+    if res and res.get('Datapoints'):
+        raw_dps = res['Datapoints']
+        raw_dps.sort(key=lambda x: x.get('Timestamp'))
+
+        vals = []
+        for dp in raw_dps:
+            ts = dp.get('Timestamp')
+            if not ts:
+                continue
+            val = dp.get(stat_key, 0.0)
+            vals.append(val)
+            ts_str = ts.strftime('%Y-%m-%d %H:%M')
+            lbl = ts.strftime('%H:%M') if time_range in ['5m', '15m', '1h', '3h', '6h', '12h'] else ts.strftime('%m-%d %H:%M')
+
+            datapoints.append({
+                'timestamp': ts_str,
+                'label': lbl,
+                'value': round(val, 2)
+            })
+
+        if vals:
+            latest_val = round(vals[-1], 2)
+            min_val = round(min(vals), 2)
+            max_val = round(max(vals), 2)
+            avg_val = round(sum(vals) / len(vals), 2)
+
+    return {
+        'instance_id': instance_id,
+        'metric': metric_name,
+        'metric_name': metric_name,
+        'label': cfg['label'],
+        'unit': cfg['unit'],
+        'statistic': stat_key,
+        'time_range': time_range,
+        'period': period,
+        'current_value': latest_val,
+        'average_value': avg_val,
+        'minimum_value': min_val,
+        'maximum_value': max_val,
+        'has_data': bool(datapoints),
+        'datapoints': datapoints
+    }
+
+
+def get_ec2_instance_metrics_service(user, instance_id, metric=None, time_range='1h', requested_account_id=None):
+    """Fetches real AWS/EC2 metrics for a specific instance."""
+    from services.ec2_service import get_ec2_client_for_instance
+
+    if not instance_id:
+        return {'error': 'instance_id is required.', 'code': 'InvalidInstanceID'}, 400
+
+    ec2_cli, region, target_acc, err, status_code = get_ec2_client_for_instance(user, instance_id, requested_account_id=requested_account_id)
+    if err or not target_acc:
+        return err, status_code
+
+    start_time, end_time, period = resolve_time_range_params(time_range)
+
+    cw_client, region, target_acc, err_cw, status_cw = AWSClientManager.get_client(user, 'cloudwatch', requested_account_id=target_acc.id, req_region=DEFAULT_REGION)
+    if err_cw or not cw_client:
+        return err_cw, status_cw
+
+    if metric and metric != 'all' and metric in METRIC_CONFIG:
+        metric_data = fetch_single_instance_metric(cw_client, target_acc, region, instance_id, metric, start_time, end_time, period, time_range)
+        return metric_data, 200
+
+    all_metrics = {}
+    metrics_to_fetch = ['CPUUtilization', 'NetworkIn', 'NetworkOut', 'DiskReadBytes', 'DiskWriteBytes', 'DiskReadOps', 'DiskWriteOps', 'StatusCheckFailed']
+
+    for m in metrics_to_fetch:
+        all_metrics[m] = fetch_single_instance_metric(cw_client, target_acc, region, instance_id, m, start_time, end_time, period, time_range)
+
+    return {
+        'instance_id': instance_id,
+        'account_name': target_acc.account_name,
+        'account_id': target_acc.account_id,
+        'time_range': time_range,
+        'period': period,
+        'metrics': all_metrics
+    }, 200
+
+
+def put_ec2_cpu_alarm_service(user, alarm_name, instance_id, threshold, period=300, comparison_operator='GreaterThanThreshold', requested_account_id=None):
+    """Creates a real AWS EC2 CPU Utilization CloudWatch Alarm using put_metric_alarm()."""
+    if not alarm_name or not str(alarm_name).strip():
+        return {'error': 'Alarm Name is required.', 'code': 'InvalidParameterValue'}, 400
+
+    if not instance_id or not str(instance_id).strip():
+        return {'error': 'EC2 Instance ID is required.', 'code': 'InvalidParameterValue'}, 400
+
+    try:
+        threshold_val = float(threshold)
+    except (ValueError, TypeError):
+        return {'error': 'CPU Threshold must be a valid number.', 'code': 'InvalidParameterValue'}, 400
+
+    from services.ec2_service import get_ec2_client_for_instance
+    _, region, target_acc, err, status_code = get_ec2_client_for_instance(user, instance_id, requested_account_id=requested_account_id)
+    if err or not target_acc:
+        return err, status_code
+
+    cw_client, region, target_acc, err_cw, status_cw = AWSClientManager.get_client(user, 'cloudwatch', requested_account_id=target_acc.id, req_region=DEFAULT_REGION)
+    if err_cw or not cw_client:
+        return err_cw, status_cw
+
+    clean_alarm_name = str(alarm_name).strip()
+    clean_operator = comparison_operator if comparison_operator in [
+        'GreaterThanThreshold', 'GreaterThanOrEqualToThreshold', 'LessThanThreshold', 'LessThanOrEqualToThreshold'
+    ] else 'GreaterThanThreshold'
+
+    try:
+        period_val = int(period)
+    except (ValueError, TypeError):
+        period_val = 300
+
+    kwargs = {
+        'AlarmName': clean_alarm_name,
+        'AlarmDescription': f'High CPU Utilization alert for EC2 instance {instance_id}',
+        'ActionsEnabled': False,
+        'MetricName': 'CPUUtilization',
+        'Namespace': 'AWS/EC2',
+        'Statistic': 'Average',
+        'Dimensions': [{'Name': 'InstanceId', 'Value': instance_id}],
+        'Period': period_val,
+        'EvaluationPeriods': 1,
+        'Threshold': threshold_val,
+        'ComparisonOperator': clean_operator
+    }
+
+    res, err_call, sc = AWSClientManager.execute_aws_call(
+        cw_client, 'cloudwatch', 'put_metric_alarm', target_acc, region, 'put_metric_alarm',
+        **kwargs
+    )
+    if err_call:
+        err_msg = err_call.get('aws_error_message') or err_call.get('error')
+        create_notification(
+            user_id=user.id,
+            notif_type='ERROR',
+            title='Alarm Creation Failed',
+            message=f'Failed to create CloudWatch alarm "{clean_alarm_name}": {err_msg}',
+            severity='ERROR',
+            resource_type='CLOUDWATCH',
+            resource_id=instance_id,
+            aws_account_id=target_acc.id
+        )
+        return err_call, sc
+
+    # Verify alarm creation immediately with describe_alarms()
+    verify_res, v_err, _ = AWSClientManager.execute_aws_call(
+        cw_client, 'cloudwatch', 'describe_alarms', target_acc, region, 'describe_alarms',
+        AlarmNames=[clean_alarm_name]
+    )
+    if v_err or not verify_res or not verify_res.get('MetricAlarms'):
+        err_msg = v_err.get('aws_error_message') or v_err.get('error') if v_err else 'Alarm creation could not be verified in AWS CloudWatch.'
+        create_notification(
+            user_id=user.id,
+            notif_type='ERROR',
+            title='Alarm Verification Failed',
+            message=f'Failed to verify CloudWatch alarm "{clean_alarm_name}": {err_msg}',
+            severity='ERROR',
+            resource_type='CLOUDWATCH',
+            resource_id=instance_id,
+            aws_account_id=target_acc.id
+        )
+        return {'error': f'Failed to verify CloudWatch alarm in AWS: {err_msg}'}, 500
+
+    # Initialize AlarmStateTrack
+    track = AlarmStateTrack.query.filter_by(user_id=user.id, aws_account_id=target_acc.id, alarm_name=clean_alarm_name).first()
+    if not track:
+        track = AlarmStateTrack(
+            user_id=user.id,
+            aws_account_id=target_acc.id,
+            alarm_name=clean_alarm_name,
+            resource_id=instance_id,
+            track_type='CPU_ALARM',
+            last_state='OK'
+        )
+        db.session.add(track)
+    else:
+        track.resource_id = instance_id
+    db.session.commit()
+
+    create_notification(
+        user_id=user.id,
+        notif_type='SUCCESS',
+        title='CPU Alarm Created',
+        message=f'EC2 CPU alarm created successfully for instance {instance_id} in {target_acc.account_name}.',
+        severity='SUCCESS',
+        resource_type='CLOUDWATCH',
+        resource_id=instance_id,
+        aws_account_id=target_acc.id
+    )
+
+    return {
+        'message': f'EC2 CPU alarm created successfully.',
+        'alarm_name': clean_alarm_name,
+        'instance_id': instance_id,
+        'threshold': threshold_val,
+        'aws_account_name': target_acc.account_name,
+        'aws_account_id': target_acc.id
+    }, 201
+
+
+def list_ec2_alarms_service(user, requested_account_id=None):
+    """Lists real CloudWatch EC2 alarms via describe_alarms() and handles state-change notifications without duplicates."""
+    accounts = get_target_aws_accounts(user, requested_account_id=requested_account_id)
     if not accounts:
-        return {'alarms': [], 'count': 0, 'message': 'No AWS accounts connected.'}, 200
+        return {'alarms': [], 'count': 0}, 200
 
     all_alarms = []
     errors = []
 
     for acc in accounts:
-        cw_client, region, err = get_cloudwatch_client_for_account(acc)
-        if err:
-            errors.append(f"Account '{acc.account_name}': {err}")
+        cw_client, region, target_acc, err, _ = AWSClientManager.get_client(user, 'cloudwatch', requested_account_id=acc.id, req_region=DEFAULT_REGION)
+        if err or not cw_client:
+            errors.append(f"Account '{acc.account_name}': {err.get('error') if isinstance(err, dict) else err}")
             continue
 
-        try:
-            kwargs = {}
-            if state_filter and state_filter.upper() in ['ALARM', 'OK', 'INSUFFICIENT_DATA']:
-                kwargs['StateValue'] = state_filter.upper()
+        res, err_call, _ = AWSClientManager.execute_aws_call(
+            cw_client, 'cloudwatch', 'describe_alarms', target_acc, region, 'describe_alarms'
+        )
+        if err_call or not res:
+            if err_call:
+                errors.append(f"Account '{acc.account_name}': {err_call.get('error')}")
+            continue
 
-            res = cw_client.describe_alarms(**kwargs)
-            for a in res.get('MetricAlarms', []):
-                state_updated = a.get('StateUpdatedTimestamp')
-                if isinstance(state_updated, datetime):
-                    state_updated_str = state_updated.strftime('%Y-%m-%d %H:%M:%S UTC')
-                else:
-                    state_updated_str = str(state_updated) if state_updated else 'N/A'
+        metric_alarms = res.get('MetricAlarms', [])
+        for a in metric_alarms:
+            # Scope check: Only include AWS/EC2 namespace or CPUUtilization
+            ns = a.get('Namespace', '')
+            if ns and ns != 'AWS/EC2':
+                continue
 
-                dimensions = [{'name': d.get('Name'), 'value': d.get('Value')} for d in a.get('Dimensions', [])]
+            a_name = a.get('AlarmName')
+            a_state = a.get('StateValue', 'INSUFFICIENT_DATA')
+            threshold = a.get('Threshold')
+            instance_id = 'N/A'
 
-                all_alarms.append({
-                    'alarm_name': a.get('AlarmName'),
-                    'alarm_arn': a.get('AlarmArn'),
-                    'description': a.get('AlarmDescription', 'No description provided.'),
-                    'namespace': a.get('Namespace', 'AWS/EC2'),
-                    'metric_name': a.get('MetricName', 'N/A'),
-                    'statistic': a.get('Statistic', a.get('ExtendedStatistic', 'Average')),
-                    'threshold': a.get('Threshold'),
-                    'comparison_operator': a.get('ComparisonOperator', 'GreaterThanOrEqualToThreshold'),
-                    'evaluation_periods': a.get('EvaluationPeriods', 1),
-                    'period': a.get('Period', 300),
-                    'state_value': a.get('StateValue', 'INSUFFICIENT_DATA'),
-                    'state_reason': a.get('StateReason', ''),
-                    'state_reason_data': a.get('StateReasonData', ''),
-                    'last_updated': state_updated_str,
-                    'dimensions': dimensions,
-                    'unit': a.get('Unit', 'N/A'),
-                    'aws_account_id': acc.id,
-                    'aws_account_name': acc.account_name,
-                    'region': region
-                })
-        except Exception as e:
-            errors.append(f"Account '{acc.account_name}': {str(e)}")
+            for d in a.get('Dimensions', []):
+                if d.get('Name') == 'InstanceId':
+                    instance_id = d.get('Value')
+
+            # State Change Evaluation with AlarmStateTrack
+            track = AlarmStateTrack.query.filter_by(
+                user_id=user.id,
+                aws_account_id=acc.id,
+                alarm_name=a_name,
+                track_type='CPU_ALARM'
+            ).first()
+
+            if not track:
+                track = AlarmStateTrack(
+                    user_id=user.id,
+                    aws_account_id=acc.id,
+                    alarm_name=a_name,
+                    resource_id=instance_id,
+                    track_type='CPU_ALARM',
+                    last_state=a_state
+                )
+                db.session.add(track)
+                db.session.commit()
+            elif track.last_state != a_state:
+                # Trigger Notification ONLY on State Change
+                old_state = track.last_state
+                track.last_state = a_state
+                db.session.commit()
+
+                if old_state == 'OK' and a_state == 'ALARM':
+                    create_notification(
+                        user_id=user.id,
+                        notif_type='WARNING',
+                        title='EC2 CPU Alarm Triggered',
+                        message=f'CPU utilization for instance {instance_id} in {acc.account_name} exceeded threshold ({threshold}%).',
+                        severity='WARNING',
+                        resource_type='CLOUDWATCH',
+                        resource_id=instance_id,
+                        aws_account_id=acc.id
+                    )
+                elif old_state == 'ALARM' and a_state == 'OK':
+                    create_notification(
+                        user_id=user.id,
+                        notif_type='SUCCESS',
+                        title='EC2 CPU Alarm Recovered',
+                        message=f'CPU utilization for instance {instance_id} in {acc.account_name} returned below the threshold.',
+                        severity='SUCCESS',
+                        resource_type='CLOUDWATCH',
+                        resource_id=instance_id,
+                        aws_account_id=acc.id
+                    )
+
+            state_updated = a.get('StateUpdatedTimestamp')
+            state_updated_str = state_updated.strftime('%Y-%m-%d %H:%M:%S UTC') if isinstance(state_updated, datetime) else str(state_updated or 'N/A')
+
+            all_alarms.append({
+                'alarm_name': a_name,
+                'alarm_arn': a.get('AlarmArn'),
+                'description': a.get('AlarmDescription', ''),
+                'namespace': ns or 'AWS/EC2',
+                'metric_name': a.get('MetricName', 'CPUUtilization'),
+                'statistic': a.get('Statistic', 'Average'),
+                'threshold': threshold,
+                'comparison_operator': a.get('ComparisonOperator', 'GreaterThanThreshold'),
+                'period': a.get('Period', 300),
+                'state_value': a_state,
+                'state_reason': a.get('StateReason', ''),
+                'last_updated': state_updated_str,
+                'instance_id': instance_id,
+                'aws_account_id': acc.id,
+                'aws_account_name': acc.account_name,
+                'aws_account_number': acc.account_id or 'N/A',
+                'region': region
+            })
 
     return {'alarms': all_alarms, 'count': len(all_alarms), 'errors': errors}, 200
 
 
-def get_alarm_details_service(user, alarm_name):
-    """Gets detailed info and state history for a specific CloudWatch Alarm."""
-    accounts = get_target_aws_accounts(user)
+def delete_ec2_alarm_service(user, alarm_name, requested_account_id=None):
+    """Deletes an EC2 CloudWatch alarm via delete_alarms()."""
+    if not alarm_name:
+        return {'error': 'Alarm Name is required.', 'code': 'InvalidParameterValue'}, 400
+
+    accounts = get_target_aws_accounts(user, requested_account_id=requested_account_id)
     if not accounts:
-        return {'error': 'No AWS accounts connected.'}, 404
+        return {'error': 'No connected AWS accounts found.'}, 400
+
+    deleted_acc = None
 
     for acc in accounts:
-        cw_client, region, err = get_cloudwatch_client_for_account(acc)
+        cw_client, region, target_acc, err, _ = AWSClientManager.get_client(user, 'cloudwatch', requested_account_id=acc.id, req_region=DEFAULT_REGION)
         if err or not cw_client:
             continue
 
-        try:
-            res = cw_client.describe_alarms(AlarmNames=[alarm_name])
-            alarms = res.get('MetricAlarms', [])
-            if alarms:
-                a = alarms[0]
-                state_updated = a.get('StateUpdatedTimestamp')
-                state_updated_str = state_updated.strftime('%Y-%m-%d %H:%M:%S UTC') if isinstance(state_updated, datetime) else str(state_updated or 'N/A')
+        res, err_call, status_code = AWSClientManager.execute_aws_call(
+            cw_client, 'cloudwatch', 'delete_alarms', target_acc, region, 'delete_alarms',
+            AlarmNames=[alarm_name]
+        )
+        if not err_call:
+            deleted_acc = target_acc
+            break
 
-                # Fetch Alarm History
-                history_items = []
-                try:
-                    h_res = cw_client.describe_alarm_history(AlarmName=alarm_name, HistoryItemType='StateUpdate', MaxRecords=15)
-                    for item in h_res.get('AlarmHistoryItems', []):
-                        ts = item.get('Timestamp')
-                        ts_str = ts.strftime('%Y-%m-%d %H:%M:%S UTC') if isinstance(ts, datetime) else str(ts or '')
-                        history_items.append({
-                            'timestamp': ts_str,
-                            'history_summary': item.get('HistorySummary'),
-                            'history_data': item.get('HistoryData'),
-                            'type': item.get('HistoryItemType')
-                        })
-                except Exception:
-                    pass
+    if not deleted_acc:
+        return {'error': f'Failed to delete alarm "{alarm_name}". Alarm not found or permission denied.'}, 404
 
-                dimensions = [{'name': d.get('Name'), 'value': d.get('Value')} for d in a.get('Dimensions', [])]
+    # Remove state track
+    AlarmStateTrack.query.filter_by(user_id=user.id, alarm_name=alarm_name).delete()
+    db.session.commit()
 
-                return {
-                    'alarm': {
-                        'alarm_name': a.get('AlarmName'),
-                        'alarm_arn': a.get('AlarmArn'),
-                        'description': a.get('AlarmDescription', 'No description provided.'),
-                        'namespace': a.get('Namespace'),
-                        'metric_name': a.get('MetricName'),
-                        'statistic': a.get('Statistic', a.get('ExtendedStatistic', 'Average')),
-                        'threshold': a.get('Threshold'),
-                        'comparison_operator': a.get('ComparisonOperator'),
-                        'evaluation_periods': a.get('EvaluationPeriods'),
-                        'datapoints_to_evaluate': a.get('DatapointsToEvaluate', a.get('EvaluationPeriods')),
-                        'period': a.get('Period'),
-                        'state_value': a.get('StateValue'),
-                        'state_reason': a.get('StateReason'),
-                        'state_reason_data': a.get('StateReasonData'),
-                        'last_updated': state_updated_str,
-                        'dimensions': dimensions,
-                        'unit': a.get('Unit', 'Count'),
-                        'actions_enabled': a.get('ActionsEnabled', True),
-                        'alarm_actions': a.get('AlarmActions', []),
-                        'ok_actions': a.get('OKActions', []),
-                        'aws_account_name': acc.account_name,
-                        'region': region
-                    },
-                    'history': history_items
-                }, 200
-        except Exception as e:
-            continue
+    create_notification(
+        user_id=user.id,
+        notif_type='INFO',
+        title='CPU Alarm Deleted',
+        message=f'Alarm "{alarm_name}" was deleted from {deleted_acc.account_name}.',
+        severity='INFO',
+        resource_type='CLOUDWATCH',
+        aws_account_id=deleted_acc.id
+    )
 
-    return {'error': f'Alarm "{alarm_name}" not found.'}, 404
+    return {'message': f'Alarm "{alarm_name}" deleted successfully.'}, 200
 
 
-def list_log_groups_service(user):
-    """Lists CloudWatch Log Groups using logs.describe_log_groups."""
-    accounts = get_target_aws_accounts(user)
+def check_ec2_health_watch_service(user, requested_account_id=None):
+    """Monitors EC2 StatusCheckFailed, StatusCheckFailed_Instance, StatusCheckFailed_System and emits state-change notifications."""
+    accounts = get_target_aws_accounts(user, requested_account_id=requested_account_id)
     if not accounts:
-        return {'log_groups': [], 'count': 0, 'message': 'No AWS accounts connected.'}, 200
+        return {'health_instances': [], 'total': 0}, 200
 
-    all_groups = []
-    errors = []
+    health_records = []
+    now = datetime.now(timezone.utc)
+    start_time = now - timedelta(minutes=15)
 
     for acc in accounts:
-        logs_client, region, err = get_logs_client_for_account(acc)
-        if err or not logs_client:
-            errors.append(f"Account '{acc.account_name}': {err}")
+        ec2_client, region, target_acc, err, _ = AWSClientManager.get_client(user, 'ec2', requested_account_id=acc.id, req_region=DEFAULT_REGION)
+        if err or not ec2_client:
             continue
 
-        try:
-            res = logs_client.describe_log_groups()
-            for g in res.get('logGroups', []):
-                created_ms = g.get('creationTime')
-                created_str = datetime.fromtimestamp(created_ms / 1000.0, timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC') if created_ms else 'N/A'
+        desc_res, _, _ = AWSClientManager.execute_aws_call(
+            ec2_client, 'ec2', 'describe_instances', target_acc, region, 'describe_instances'
+        )
 
-                all_groups.append({
-                    'log_group_name': g.get('logGroupName'),
-                    'arn': g.get('arn'),
-                    'stored_bytes': g.get('storedBytes', 0),
-                    'retention_in_days': g.get('retentionInDays', 'Never Expire'),
-                    'creation_time': created_str,
-                    'metric_filter_count': g.get('metricFilterCount', 0),
+        cw_client, _, _, _, _ = AWSClientManager.get_client(user, 'cloudwatch', requested_account_id=acc.id, req_region=DEFAULT_REGION)
+        if not desc_res or not cw_client:
+            continue
+
+        for r in desc_res.get('Reservations', []):
+            for inst in r.get('Instances', []):
+                iid = inst.get('InstanceId')
+                state_name = inst.get('State', {}).get('Name')
+                name_tag = next((t['Value'] for t in inst.get('Tags', []) if t.get('Key') == 'Name'), iid)
+
+                status_fail = 0
+                inst_fail = 0
+                sys_fail = 0
+
+                # Fetch StatusCheckFailed
+                res_sc, _, _ = AWSClientManager.execute_aws_call(
+                    cw_client, 'cloudwatch', 'get_metric_statistics', target_acc, region, 'get_metric_statistics',
+                    Namespace='AWS/EC2', MetricName='StatusCheckFailed', Dimensions=[{'Name': 'InstanceId', 'Value': iid}],
+                    StartTime=start_time, EndTime=now, Period=300, Statistics=['Maximum']
+                )
+                if res_sc and res_sc.get('Datapoints'):
+                    status_fail = max(dp.get('Maximum', 0) for dp in res_sc['Datapoints'])
+
+                # Fetch StatusCheckFailed_Instance
+                res_inst, _, _ = AWSClientManager.execute_aws_call(
+                    cw_client, 'cloudwatch', 'get_metric_statistics', target_acc, region, 'get_metric_statistics',
+                    Namespace='AWS/EC2', MetricName='StatusCheckFailed_Instance', Dimensions=[{'Name': 'InstanceId', 'Value': iid}],
+                    StartTime=start_time, EndTime=now, Period=300, Statistics=['Maximum']
+                )
+                if res_inst and res_inst.get('Datapoints'):
+                    inst_fail = max(dp.get('Maximum', 0) for dp in res_inst['Datapoints'])
+
+                # Fetch StatusCheckFailed_System
+                res_sys, _, _ = AWSClientManager.execute_aws_call(
+                    cw_client, 'cloudwatch', 'get_metric_statistics', target_acc, region, 'get_metric_statistics',
+                    Namespace='AWS/EC2', MetricName='StatusCheckFailed_System', Dimensions=[{'Name': 'InstanceId', 'Value': iid}],
+                    StartTime=start_time, EndTime=now, Period=300, Statistics=['Maximum']
+                )
+                if res_sys and res_sys.get('Datapoints'):
+                    sys_fail = max(dp.get('Maximum', 0) for dp in res_sys['Datapoints'])
+
+                current_health = 'FAILED' if (status_fail > 0 or inst_fail > 0 or sys_fail > 0) else 'HEALTHY'
+
+                # Track State Transition
+                alarm_key = f"HEALTH_{iid}"
+                track = AlarmStateTrack.query.filter_by(
+                    user_id=user.id,
+                    aws_account_id=acc.id,
+                    alarm_name=alarm_key,
+                    track_type='HEALTH_CHECK'
+                ).first()
+
+                if not track:
+                    track = AlarmStateTrack(
+                        user_id=user.id,
+                        aws_account_id=acc.id,
+                        alarm_name=alarm_key,
+                        resource_id=iid,
+                        track_type='HEALTH_CHECK',
+                        last_state=current_health
+                    )
+                    db.session.add(track)
+                    db.session.commit()
+                elif track.last_state != current_health:
+                    old_state = track.last_state
+                    track.last_state = current_health
+                    db.session.commit()
+
+                    if old_state == 'HEALTHY' and current_health == 'FAILED':
+                        create_notification(
+                            user_id=user.id,
+                            notif_type='WARNING',
+                            title='EC2 Instance Health Check Failed',
+                            message=f'Instance {name_tag} ({iid}) reported a failed status check in {acc.account_name}.',
+                            severity='WARNING',
+                            resource_type='CLOUDWATCH',
+                            resource_id=iid,
+                            aws_account_id=acc.id
+                        )
+                    elif old_state == 'FAILED' and current_health == 'HEALTHY':
+                        create_notification(
+                            user_id=user.id,
+                            notif_type='SUCCESS',
+                            title='EC2 Instance Health Recovered',
+                            message=f'Instance {name_tag} ({iid}) status check returned to healthy in {acc.account_name}.',
+                            severity='SUCCESS',
+                            resource_type='CLOUDWATCH',
+                            resource_id=iid,
+                            aws_account_id=acc.id
+                        )
+
+                health_records.append({
+                    'instance_id': iid,
+                    'name': name_tag,
+                    'instance_state': state_name,
+                    'status_check_failed': status_fail,
+                    'status_check_instance': inst_fail,
+                    'status_check_system': sys_fail,
+                    'health_state': current_health,
                     'aws_account_id': acc.id,
                     'aws_account_name': acc.account_name,
-                    'region': region
-                })
-        except Exception as e:
-            errors.append(f"Account '{acc.account_name}': {str(e)}")
-
-    return {'log_groups': all_groups, 'count': len(all_groups), 'errors': errors}, 200
-
-
-def list_log_streams_service(user, log_group_name):
-    """Lists Log Streams for a given Log Group using logs.describe_log_streams."""
-    accounts = get_target_aws_accounts(user)
-    if not accounts:
-        return {'log_streams': [], 'count': 0, 'message': 'No AWS accounts connected.'}, 200
-
-    all_streams = []
-    errors = []
-
-    for acc in accounts:
-        logs_client, region, err = get_logs_client_for_account(acc)
-        if err or not logs_client:
-            continue
-
-        try:
-            res = logs_client.describe_log_streams(
-                logGroupName=log_group_name,
-                orderBy='LastEventTime',
-                descending=True,
-                limit=50
-            )
-            for s in res.get('logStreams', []):
-                c_time = s.get('creationTime')
-                l_event = s.get('lastEventTimestamp') or s.get('lastIngestionTime')
-
-                c_str = datetime.fromtimestamp(c_time / 1000.0, timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC') if c_time else 'N/A'
-                l_str = datetime.fromtimestamp(l_event / 1000.0, timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC') if l_event else 'N/A'
-
-                all_streams.append({
-                    'log_stream_name': s.get('logStreamName'),
-                    'creation_time': c_str,
-                    'last_event_timestamp': l_str,
-                    'stored_bytes': s.get('storedBytes', 0),
-                    'arn': s.get('arn'),
-                    'aws_account_name': acc.account_name,
-                    'region': region
-                })
-            if all_streams:
-                break
-        except ClientError as e:
-            if e.response.get('Error', {}).get('Code') == 'ResourceNotFoundException':
-                continue
-            errors.append(f"Account '{acc.account_name}': {str(e)}")
-        except Exception as e:
-            errors.append(f"Account '{acc.account_name}': {str(e)}")
-
-    return {'log_streams': all_streams, 'count': len(all_streams), 'log_group_name': log_group_name, 'errors': errors}, 200
-
-
-def get_log_events_service(user, log_group_name, log_stream_name, limit=100):
-    """Fetches log events for a specific log stream using logs.get_log_events."""
-    accounts = get_target_aws_accounts(user)
-    if not accounts:
-        return {'events': [], 'count': 0, 'message': 'No AWS accounts connected.'}, 200
-
-    events_list = []
-    errors = []
-
-    for acc in accounts:
-        logs_client, region, err = get_logs_client_for_account(acc)
-        if err or not logs_client:
-            continue
-
-        try:
-            res = logs_client.get_log_events(
-                logGroupName=log_group_name,
-                logStreamName=log_stream_name,
-                limit=min(int(limit), 200),
-                startFromHead=False
-            )
-
-            raw_events = res.get('events', [])
-            # Sort newest events first as requested
-            raw_events.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
-
-            for ev in raw_events:
-                ts = ev.get('timestamp')
-                ts_str = datetime.fromtimestamp(ts / 1000.0, timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC') if ts else 'N/A'
-                time_only = datetime.fromtimestamp(ts / 1000.0, timezone.utc).strftime('%H:%M:%S') if ts else ''
-
-                msg = ev.get('message', '')
-                # Determine log level if possible
-                level = 'INFO'
-                msg_upper = msg.upper()
-                if 'ERROR' in msg_upper or 'FATAL' in msg_upper or 'EXCEPTION' in msg_upper or 'FAIL' in msg_upper:
-                    level = 'ERROR'
-                elif 'WARN' in msg_upper or 'WARNING' in msg_upper:
-                    level = 'WARN'
-                elif 'DEBUG' in msg_upper:
-                    level = 'DEBUG'
-
-                events_list.append({
-                    'timestamp': ts_str,
-                    'time_only': time_only,
-                    'message': msg,
-                    'level': level,
-                    'ingestion_time': ev.get('ingestionTime')
+                    'aws_account_number': acc.account_id or 'N/A'
                 })
 
-            if events_list or len(raw_events) == 0:
-                return {
-                    'events': events_list,
-                    'count': len(events_list),
-                    'log_group_name': log_group_name,
-                    'log_stream_name': log_stream_name,
-                    'next_forward_token': res.get('nextForwardToken'),
-                    'next_backward_token': res.get('nextBackwardToken')
-                }, 200
-        except ClientError as e:
-            code = e.response.get('Error', {}).get('Code')
-            if code == 'ResourceNotFoundException':
-                continue
-            errors.append(f"Logs error ({acc.account_name}): {str(e)}")
-        except Exception as e:
-            errors.append(f"Logs error ({acc.account_name}): {str(e)}")
-
-    return {'events': [], 'count': 0, 'errors': errors, 'log_group_name': log_group_name, 'log_stream_name': log_stream_name}, 200
+    return {'health_instances': health_records, 'total': len(health_records)}, 200
 
 
-def list_metrics_service(user, namespace=None):
-    """Lists available metrics in CloudWatch using cloudwatch.list_metrics."""
-    accounts = get_target_aws_accounts(user)
+def get_s3_metrics_service(user, bucket_name=None, time_range='1h', requested_account_id=None):
+    """Fetches real AWS/S3 CloudWatch metrics (BucketSizeBytes, NumberOfObjects)."""
+    accounts = get_target_aws_accounts(user, requested_account_id=requested_account_id)
     if not accounts:
-        return {'metrics': [], 'count': 0}, 200
-
-    all_metrics = []
-
-    for acc in accounts:
-        cw_client, region, err = get_cloudwatch_client_for_account(acc)
-        if err or not cw_client:
-            continue
-
-        try:
-            kwargs = {}
-            if namespace:
-                kwargs['Namespace'] = namespace
-
-            res = cw_client.list_metrics(**kwargs)
-            for m in res.get('Metrics', []):
-                dims = [{'name': d.get('Name'), 'value': d.get('Value')} for d in m.get('Dimensions', [])]
-                all_metrics.append({
-                    'namespace': m.get('Namespace'),
-                    'metric_name': m.get('MetricName'),
-                    'dimensions': dims,
-                    'aws_account_name': acc.account_name,
-                    'region': region
-                })
-        except Exception:
-            pass
-
-    return {'metrics': all_metrics, 'count': len(all_metrics)}, 200
-
-
-def get_ec2_resources_service(user):
-    """Helper service to fetch connected EC2 instances list for CloudWatch metrics filter."""
-    accounts = get_target_aws_accounts(user)
-    instances = []
-
-    for acc in accounts:
-        try:
-            ec2_client = boto3.client(
-                'ec2',
-                aws_access_key_id=acc.get_decrypted_access_key(),
-                aws_secret_access_key=acc.get_decrypted_secret_key(),
-                region_name=acc.region or 'us-east-1'
-            )
-            res = ec2_client.describe_instances()
-            for r in res.get('Reservations', []):
-                for inst in r.get('Instances', []):
-                    inst_id = inst.get('InstanceId')
-                    name = inst_id
-                    for tag in inst.get('Tags', []):
-                        if tag.get('Key') == 'Name':
-                            name = f"{tag.get('Value')} ({inst_id})"
-                            break
-                    instances.append({
-                        'instance_id': inst_id,
-                        'name': name,
-                        'account_name': acc.account_name
-                    })
-        except Exception:
-            pass
-
-    return {'instances': instances}, 200
-
-
-def get_metric_statistics_service(user, namespace, metric_name, time_range='1h', dimension_name=None, dimension_value=None, stat='Average'):
-    """
-    Fetches metric statistics using cloudwatch.get_metric_statistics for the given time range and dimension.
-    Supported time_range values: '1h', '6h', '24h', '7d'.
-    """
-    accounts = get_target_aws_accounts(user)
-    if not accounts:
-        return {'datapoints': [], 'count': 0, 'metric_name': metric_name, 'namespace': namespace}, 200
+        return {'metrics': [], 'has_data': False}, 200
 
     now = datetime.now(timezone.utc)
+    start_time = now - timedelta(days=2) # AWS S3 CloudWatch metrics publish daily
 
-    if time_range == '1h':
-        start_time = now - timedelta(hours=1)
-        period = 60 # 1 min datapoints
-    elif time_range == '6h':
-        start_time = now - timedelta(hours=6)
-        period = 300 # 5 min datapoints
-    elif time_range == '24h':
-        start_time = now - timedelta(hours=24)
-        period = 900 # 15 min datapoints
-    elif time_range == '7d':
-        start_time = now - timedelta(days=7)
-        period = 3600 # 1 hour datapoints
-    else:
-        start_time = now - timedelta(hours=1)
-        period = 60
-
-    unit_map = {
-        'CPUUtilization': 'Percent',
-        'NetworkIn': 'Bytes',
-        'NetworkOut': 'Bytes',
-        'DiskReadBytes': 'Bytes',
-        'DiskWriteBytes': 'Bytes',
-        'StatusCheckFailed': 'Count'
-    }
-    expected_unit = unit_map.get(metric_name)
-
-    stats_requested = ['Average', 'Sum', 'Maximum', 'Minimum']
-
-    aggregated_datapoints = {}
+    result_metrics = []
+    has_real_data = False
 
     for acc in accounts:
-        cw_client, region, err = get_cloudwatch_client_for_account(acc)
-        if err or not cw_client:
+        cw_client, region, target_acc, err, _ = AWSClientManager.get_client(user, 'cloudwatch', requested_account_id=acc.id, req_region=DEFAULT_REGION)
+        s3_client, _, _, _, _ = AWSClientManager.get_client(user, 's3', requested_account_id=acc.id, req_region=DEFAULT_REGION)
+
+        if err or not cw_client or not s3_client:
             continue
 
-        try:
-            dimensions = []
-            if dimension_name and dimension_value:
-                dimensions.append({'Name': dimension_name, 'Value': dimension_value})
+        b_res, _, _ = AWSClientManager.execute_aws_call(s3_client, 's3', 'list_buckets', target_acc, region, 'list_buckets')
+        if not b_res:
+            continue
 
-            kwargs = {
-                'Namespace': namespace or 'AWS/EC2',
-                'MetricName': metric_name,
-                'StartTime': start_time,
-                'EndTime': now,
-                'Period': period,
-                'Statistics': stats_requested
-            }
-            if dimensions:
-                kwargs['Dimensions'] = dimensions
-            if expected_unit:
-                kwargs['Unit'] = expected_unit
+        target_buckets = [bucket_name] if bucket_name else [b['Name'] for b in b_res.get('Buckets', [])]
 
-            res = cw_client.get_metric_statistics(**kwargs)
-            dps = res.get('Datapoints', [])
+        for b_name in target_buckets:
+            # 1. BucketSizeBytes
+            size_res, _, _ = AWSClientManager.execute_aws_call(
+                cw_client, 'cloudwatch', 'get_metric_statistics', target_acc, region, 'get_metric_statistics',
+                Namespace='AWS/S3', MetricName='BucketSizeBytes',
+                Dimensions=[{'Name': 'BucketName', 'Value': b_name}, {'Name': 'StorageType', 'Value': 'StandardStorage'}],
+                StartTime=start_time, EndTime=now, Period=86400, Statistics=['Average']
+            )
 
-            for dp in dps:
-                ts = dp.get('Timestamp')
-                if not ts:
-                    continue
+            # 2. NumberOfObjects
+            obj_res, _, _ = AWSClientManager.execute_aws_call(
+                cw_client, 'cloudwatch', 'get_metric_statistics', target_acc, region, 'get_metric_statistics',
+                Namespace='AWS/S3', MetricName='NumberOfObjects',
+                Dimensions=[{'Name': 'BucketName', 'Value': b_name}, {'Name': 'StorageType', 'Value': 'AllStorageTypes'}],
+                StartTime=start_time, EndTime=now, Period=86400, Statistics=['Average']
+            )
 
-                ts_key = ts.strftime('%Y-%m-%d %H:%M')
-                if time_range in ['1h', '6h']:
-                    label = ts.strftime('%H:%M')
-                else:
-                    label = ts.strftime('%m-%d %H:%M')
+            size_bytes = None
+            object_count = None
 
-                val = dp.get(stat)
-                if val is None:
-                    val = dp.get('Average') if 'Average' in dp else (dp.get('Sum', 0))
+            if size_res and size_res.get('Datapoints'):
+                dps = size_res['Datapoints']
+                dps.sort(key=lambda x: x.get('Timestamp'))
+                size_bytes = dps[-1].get('Average')
+                has_real_data = True
 
-                if ts_key not in aggregated_datapoints:
-                    aggregated_datapoints[ts_key] = {
-                        'timestamp': ts_key,
-                        'label': label,
-                        'value': round(val, 2) if val is not None else 0,
-                        'unit': dp.get('Unit', expected_unit or 'Count'),
-                        'count': 1
-                    }
-                else:
-                    existing = aggregated_datapoints[ts_key]
-                    existing['value'] = round((existing['value'] * existing['count'] + val) / (existing['count'] + 1), 2)
-                    existing['count'] += 1
+            if obj_res and obj_res.get('Datapoints'):
+                dps = obj_res['Datapoints']
+                dps.sort(key=lambda x: x.get('Timestamp'))
+                object_count = int(dps[-1].get('Average', 0))
+                has_real_data = True
 
-        except Exception as e:
-            print(f"[CW METRICS WARNING] Error fetching {metric_name} for {acc.account_name}: {e}")
+            result_metrics.append({
+                'bucket_name': b_name,
+                'size_bytes': size_bytes,
+                'size_gb': round(size_bytes / (1024 ** 3), 4) if size_bytes is not None else None,
+                'object_count': object_count,
+                'has_data': size_bytes is not None or object_count is not None,
+                'aws_account_id': acc.id,
+                'aws_account_name': acc.account_name,
+                'aws_account_number': acc.account_id or 'N/A'
+            })
 
-    sorted_dps = sorted(aggregated_datapoints.values(), key=lambda x: x['timestamp'])
+    return {'metrics': result_metrics, 'has_data': has_real_data}, 200
+
+
+def get_s3_buckets_service(user, requested_account_id=None):
+    """Lists S3 buckets for CloudWatch selection."""
+    from services.s3_service import list_buckets_service
+    return list_buckets_service(user, requested_account_id=requested_account_id)
+
+
+def create_s3_watch_service(user, bucket_name, threshold_gb, requested_account_id=None):
+    """Saves a storage threshold watch for an S3 bucket."""
+    if not bucket_name or not str(bucket_name).strip():
+        return {'error': 'Bucket Name is required.', 'code': 'InvalidParameterValue'}, 400
+
+    try:
+        t_gb = float(threshold_gb)
+        if t_gb <= 0:
+            return {'error': 'Threshold must be greater than 0 GB.', 'code': 'InvalidParameterValue'}, 400
+    except (ValueError, TypeError):
+        return {'error': 'Threshold must be a valid number in GB.', 'code': 'InvalidParameterValue'}, 400
+
+    from services.s3_service import get_s3_client_for_bucket
+    _, _, target_acc, err, _ = get_s3_client_for_bucket(user, bucket_name, requested_account_id=requested_account_id)
+    if err or not target_acc:
+        return err or {'error': f'Bucket "{bucket_name}" not found.'}, 404
+
+    clean_bucket = str(bucket_name).strip().lower()
+
+    watch = S3StorageWatch.query.filter_by(user_id=user.id, aws_account_id=target_acc.id, bucket_name=clean_bucket).first()
+    if not watch:
+        watch = S3StorageWatch(
+            user_id=user.id,
+            aws_account_id=target_acc.id,
+            bucket_name=clean_bucket,
+            threshold_gb=t_gb,
+            last_state='OK'
+        )
+        db.session.add(watch)
+    else:
+        watch.threshold_gb = t_gb
+
+    db.session.commit()
+
+    create_notification(
+        user_id=user.id,
+        notif_type='SUCCESS',
+        title='S3 Storage Watch Created',
+        message=f'Storage threshold of {t_gb} GB set for bucket "{clean_bucket}" in {target_acc.account_name}.',
+        severity='SUCCESS',
+        resource_type='CLOUDWATCH',
+        resource_id=clean_bucket,
+        aws_account_id=target_acc.id
+    )
 
     return {
-        'metric_name': metric_name,
-        'namespace': namespace,
-        'time_range': time_range,
-        'period': period,
-        'stat': stat,
-        'unit': expected_unit or (sorted_dps[0]['unit'] if sorted_dps else ''),
-        'datapoints': sorted_dps,
-        'count': len(sorted_dps)
-    }, 200
+        'message': f'Storage watch for bucket "{clean_bucket}" created successfully.',
+        'watch': watch.to_dict()
+    }, 201
+
+
+def list_s3_watches_service(user, requested_account_id=None):
+    """Lists configured S3 storage watches."""
+    query = S3StorageWatch.query.filter_by(user_id=user.id)
+    if requested_account_id and str(requested_account_id).lower() not in ('all', '', 'none'):
+        try:
+            query = query.filter_by(aws_account_id=int(requested_account_id))
+        except (ValueError, TypeError):
+            pass
+
+    watches = query.order_by(S3StorageWatch.created_at.desc()).all()
+    return {'watches': [w.to_dict() for w in watches], 'count': len(watches)}, 200
+
+
+def delete_s3_watch_service(user, watch_id):
+    """Deletes an S3 storage watch."""
+    watch = S3StorageWatch.query.filter_by(id=watch_id, user_id=user.id).first()
+    if not watch:
+        return {'error': 'S3 Storage Watch not found.'}, 404
+
+    b_name = watch.bucket_name
+    db.session.delete(watch)
+    db.session.commit()
+
+    return {'message': f'Storage watch for bucket "{b_name}" removed successfully.'}, 200
+
+
+def check_s3_storage_watches_service(user):
+    """Evaluates real S3 storage size against watches and triggers state-change notifications."""
+    watches = S3StorageWatch.query.filter_by(user_id=user.id).all()
+    if not watches:
+        return {'evaluated': 0}, 200
+
+    from services.s3_service import fetch_s3_buckets_for_account
+
+    # Cache account bucket sizes
+    acc_buckets_cache = {}
+
+    for watch in watches:
+        acc = watch.aws_account
+        if not acc:
+            continue
+
+        if acc.id not in acc_buckets_cache:
+            buckets, _, _, _ = fetch_s3_buckets_for_account(user, acc)
+            acc_buckets_cache[acc.id] = {b['name']: b['size_bytes'] for b in buckets}
+
+        bucket_size_bytes = acc_buckets_cache[acc.id].get(watch.bucket_name, 0)
+        current_gb = round(bucket_size_bytes / (1024 ** 3), 4)
+
+        current_state = 'EXCEEDED' if current_gb > watch.threshold_gb else 'OK'
+
+        if watch.last_state != current_state:
+            old_state = watch.last_state
+            watch.last_state = current_state
+            db.session.commit()
+
+            if old_state == 'OK' and current_state == 'EXCEEDED':
+                create_notification(
+                    user_id=user.id,
+                    notif_type='WARNING',
+                    title='S3 Storage Threshold Exceeded',
+                    message=f'Bucket "{watch.bucket_name}" ({current_gb:.2f} GB) exceeded the configured threshold of {watch.threshold_gb} GB in {acc.account_name}.',
+                    severity='WARNING',
+                    resource_type='S3',
+                    resource_id=watch.bucket_name,
+                    aws_account_id=acc.id
+                )
+            elif old_state == 'EXCEEDED' and current_state == 'OK':
+                create_notification(
+                    user_id=user.id,
+                    notif_type='SUCCESS',
+                    title='S3 Storage Threshold Recovered',
+                    message=f'Bucket "{watch.bucket_name}" storage usage returned below threshold of {watch.threshold_gb} GB in {acc.account_name}.',
+                    severity='SUCCESS',
+                    resource_type='S3',
+                    resource_id=watch.bucket_name,
+                    aws_account_id=acc.id
+                )
+
+    return {'evaluated': len(watches)}, 200

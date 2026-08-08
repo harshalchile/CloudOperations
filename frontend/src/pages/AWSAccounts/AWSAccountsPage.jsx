@@ -43,7 +43,8 @@ export const AWSAccountsPage = () => {
     account_name: '',
     access_key: '',
     secret_key: '',
-    region: 'us-east-1'
+    session_token: '',
+    region: 'ap-south-1'
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [testingId, setTestingId] = useState(null);
@@ -77,12 +78,23 @@ export const AWSAccountsPage = () => {
     loadAccounts();
   }, []);
 
+  const getErrorMessage = (err, fallback) => {
+    if (!err) return fallback;
+    const data = err.response?.data;
+    if (data?.error?.message) return data.error.message;
+    if (data?.aws_error_message) return data.aws_error_message;
+    if (typeof data?.error === 'string') return data.error;
+    if (data?.message) return data.message;
+    return err.message || fallback;
+  };
+
   const handleOpenAddModal = () => {
     setFormData({
       account_name: '',
       access_key: '',
       secret_key: '',
-      region: 'us-east-1'
+      session_token: '',
+      region: 'ap-south-1'
     });
     setIsAddModalOpen(true);
   };
@@ -93,7 +105,8 @@ export const AWSAccountsPage = () => {
       account_name: acc.account_name,
       access_key: '',
       secret_key: '',
-      region: acc.region
+      session_token: '',
+      region: acc.region || 'ap-south-1'
     });
     setIsEditModalOpen(true);
   };
@@ -108,12 +121,15 @@ export const AWSAccountsPage = () => {
     setIsSubmitting(true);
     try {
       const res = await api.post('/aws/accounts', formData);
-      showToast(res.data?.message || 'AWS Account connected successfully!');
-      setIsAddModalOpen(false);
-      await loadAccounts(true);
+      if ((res.status === 200 || res.status === 201) && res.data && res.data.account) {
+        showToast(res.data?.message || 'AWS Account connected successfully!');
+        setIsAddModalOpen(false);
+        await loadAccounts(true);
+      } else {
+        showToast(res.data?.error || 'Failed to add AWS Account.', 'error');
+      }
     } catch (err) {
-      const msg = err.response?.data?.error || 'Failed to add AWS Account.';
-      showToast(msg, 'error');
+      showToast(getErrorMessage(err, 'Failed to add AWS Account.'), 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -127,21 +143,26 @@ export const AWSAccountsPage = () => {
     try {
       const payload = {
         account_name: formData.account_name,
-        region: formData.region
+        region: formData.region || 'ap-south-1'
       };
       if (formData.access_key && formData.secret_key) {
         payload.access_key = formData.access_key;
         payload.secret_key = formData.secret_key;
+        if (formData.session_token) payload.session_token = formData.session_token;
       }
 
       const res = await api.put(`/aws/accounts/${editingAccount.id}`, payload);
-      showToast(res.data?.message || 'AWS Account updated.');
-      setIsEditModalOpen(false);
-      setEditingAccount(null);
-      await loadAccounts(true);
+      if (res.status === 200 && res.data && res.data.account) {
+        showToast(res.data?.message || 'AWS Account updated.');
+        setIsEditModalOpen(false);
+        setEditingAccount(null);
+        await loadAccounts(true);
+      } else {
+        const errText = res.data?.error?.message || res.data?.error || 'Failed to update AWS Account.';
+        showToast(errText, 'error');
+      }
     } catch (err) {
-      const msg = err.response?.data?.error || 'Failed to update AWS Account.';
-      showToast(msg, 'error');
+      showToast(getErrorMessage(err, 'Failed to update AWS Account.'), 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -154,11 +175,11 @@ export const AWSAccountsPage = () => {
       if (res.data && res.data.success) {
         showToast(`STS Verification Passed for Account ID: ${res.data.account_id}`);
       } else {
-        showToast(res.data?.error || 'Verification failed.', 'error');
+        const errText = res.data?.error?.message || res.data?.error || 'Verification failed.';
+        showToast(errText, 'error');
       }
     } catch (err) {
-      const msg = err.response?.data?.error || 'Connection test failed.';
-      showToast(msg, 'error');
+      showToast(getErrorMessage(err, 'Connection test failed.'), 'error');
     } finally {
       setTestingId(null);
     }
@@ -397,6 +418,17 @@ export const AWSAccountsPage = () => {
                   value={formData.secret_key}
                   onChange={(e) => setFormData({ ...formData, secret_key: e.target.value })}
                   placeholder="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+                  className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
+                />
+              </div>
+
+              <div>
+                <label className="block text-slate-300 mb-1 font-semibold">AWS Session Token (Optional, for temporary STS credentials)</label>
+                <input
+                  type="password"
+                  value={formData.session_token}
+                  onChange={(e) => setFormData({ ...formData, session_token: e.target.value })}
+                  placeholder="FwoGZXIvYXdzE... (Optional)"
                   className="w-full px-3 py-2 bg-slate-900 border border-slate-800 rounded text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500 font-mono"
                 />
               </div>

@@ -2,10 +2,12 @@ import React, { useState } from 'react';
 import { Box, Avatar, Typography, Menu, MenuItem, Divider, IconButton } from '@mui/material';
 import { FiUser, FiSettings, FiLogOut, FiChevronDown } from 'react-icons/fi';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext';
 
 export const ProfileMenu = () => {
   const [anchorEl, setAnchorEl] = useState(null);
   const navigate = useNavigate();
+  const { user, avatarInitial, logout } = useAuth();
   const open = Boolean(anchorEl);
 
   const handleClick = (event) => setAnchorEl(event.currentTarget);
@@ -14,6 +16,12 @@ export const ProfileMenu = () => {
   const handleNavigate = (path) => {
     handleClose();
     navigate(path);
+  };
+
+  const handleLogout = async () => {
+    handleClose();
+    await logout();
+    navigate('/login');
   };
 
   return (
@@ -27,11 +35,11 @@ export const ProfileMenu = () => {
         aria-expanded={open ? 'true' : undefined}
       >
         <Avatar sx={{ width: 34, height: 34, bgcolor: 'primary.main', fontSize: '0.875rem', fontWeight: 700 }}>
-          HU
+          {avatarInitial || 'U'}
         </Avatar>
         <Box sx={{ display: { xs: 'none', md: 'flex' }, flexDirection: 'column', alignItems: 'flex-start' }}>
           <Typography variant="body2" sx={{ fontWeight: 600, color: 'text.primary', lineHeight: 1.2 }}>
-            Harsh User
+            {user?.name || 'User'}
           </Typography>
           <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.725rem' }}>
             Cloud Engineer
@@ -53,10 +61,10 @@ export const ProfileMenu = () => {
       >
         <Box sx={{ px: 2, py: 1 }}>
           <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-            Harsh User
+            {user?.name || 'User'}
           </Typography>
           <Typography variant="caption" color="text.secondary">
-            admin@cloudops.internal
+            {user?.email || ''}
           </Typography>
         </Box>
         <Divider sx={{ my: 0.5 }} />
@@ -67,10 +75,12 @@ export const ProfileMenu = () => {
           <FiSettings style={{ marginRight: 10 }} /> System Preferences
         </MenuItem>
         <Divider sx={{ my: 0.5 }} />
-        <MenuItem onClick={() => handleNavigate('/login')} sx={{ color: 'error.main' }}>
+        <MenuItem onClick={handleLogout} sx={{ color: 'error.main' }}>
           <FiLogOut style={{ marginRight: 10 }} /> Sign Out
         </MenuItem>
       </Menu>
     </Box>
   );
 };
+
+export default ProfileMenu;
