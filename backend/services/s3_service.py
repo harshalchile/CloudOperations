@@ -1,7 +1,9 @@
+import os
 import io
 import time
 import re
 import logging
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 from flask import send_file
@@ -12,7 +14,8 @@ from utils.aws_client_manager import AWSClientManager
 
 logger = logging.getLogger("s3_service")
 
-DEFAULT_REGION = 'ap-south-1'
+DEFAULT_REGION = os.getenv('AWS_REGION', 'ap-south-1')
+DEFAULT_PRESIGNED_EXPIRATION = int(os.getenv('S3_PRESIGNED_URL_EXPIRATION', 3600))
 MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024 * 1024  # 5 GB
 
 
@@ -398,10 +401,15 @@ def upload_object_service(user, bucket_name, file_obj, filename, prefix='', requ
     }, 200
 
 
-def get_presigned_url_service(user, bucket_name, object_key, expires_in=3600, requested_account_id=None):
-    """Generates a secure AWS S3 pre-signed URL for direct download or preview."""
+def get_presigned_url_service(user, bucket_name, object_key, expires_in=None, requested_account_id=None):
+    """Generates a secure AWS S3 pre-signed URL for direct download or preview along with standard S3 public URL format."""
     if not bucket_name or not object_key:
         return {'error': 'bucket_name and object_key are required.', 'code': 'InvalidParameterValue'}, 400
+
+    if not expires_in or int(expires_in) <= 0:
+        expires_in = DEFAULT_PRESIGNED_EXPIRATION
+    else:
+        expires_in = int(expires_in)
 
     s3_client, region, target_acc, err, sc = get_s3_client_for_bucket(
         user, bucket_name, requested_account_id=requested_account_id
@@ -416,11 +424,19 @@ def get_presigned_url_service(user, bucket_name, object_key, expires_in=3600, re
     if err_call:
         return err_call, status_code
 
+    # Properly URL-encode object key while preserving forward slashes
+    encoded_key = urllib.parse.quote(object_key, safe='/')
+    bucket_region = region or DEFAULT_REGION
+    public_url = f"https://{bucket_name}.s3.{bucket_region}.amazonaws.com/{encoded_key}"
+
     return {
         'previewUrl': res,
         'url': res,
+        'presigned_url': res,
+        'public_url': public_url,
         'object_key': object_key,
         'bucket_name': bucket_name,
+        'region': bucket_region,
         'expires_in': expires_in
     }, 200
 
@@ -461,7 +477,7 @@ def download_object_service(user, bucket_name, object_key, requested_account_id=
 
 
 def head_object_service(user, bucket_name, object_key, requested_account_id=None):
-    """Retrieves full object metadata (HeadObject) in ap-south-1."""
+    """Retrieves full object metadata (HeadObject) and public URL in ap-south-1."""
     if not bucket_name or not object_key:
         return {'error': 'bucket_name and object_key are required.', 'code': 'InvalidParameterValue'}, 400
 
@@ -479,11 +495,16 @@ def head_object_service(user, bucket_name, object_key, requested_account_id=None
         return err_call, status_code
 
     last_mod = res['LastModified'].strftime('%Y-%m-%d %H:%M:%S') if res.get('LastModified') else 'N/A'
+    bucket_region = region or DEFAULT_REGION
+    encoded_key = urllib.parse.quote(object_key, safe='/')
+    public_url = f"https://{bucket_name}.s3.{bucket_region}.amazonaws.com/{encoded_key}"
 
     return {
         'key': object_key,
         'bucket': bucket_name,
-        'region': DEFAULT_REGION,
+        'region': bucket_region,
+        'public_url': public_url,
+        's3_uri': f"s3://{bucket_name}/{object_key}",
         'size_bytes': res.get('ContentLength', 0),
         'size_formatted': format_size(res.get('ContentLength', 0)),
         'content_type': res.get('ContentType', 'application/octet-stream'),
@@ -491,7 +512,7 @@ def head_object_service(user, bucket_name, object_key, requested_account_id=None
         'etag': res.get('ETag', '').strip('"'),
         'storage_class': res.get('StorageClass', 'STANDARD'),
         'metadata': res.get('Metadata', {}),
-        'aws_account_name': target_acc.account_name
+        'aws_account_name': target_acc.account_name if target_acc else 'AWS'
     }, 200
 
 

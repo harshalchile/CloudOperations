@@ -62,15 +62,26 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
 
-    # Enable CORS for React frontend (Vite dev server)
-    CORS(app, resources={r"/*": {"origins": "*"}})
+    # Resolve allowed CORS origins
+    cors_origins_env = os.getenv('CORS_ORIGINS') or os.getenv('FRONTEND_URL')
+    if cors_origins_env and cors_origins_env.strip() != '*':
+        allowed_origins = [orig.strip() for orig in cors_origins_env.split(',') if orig.strip()]
+        dev_origins = ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3000', 'http://localhost:5000', 'http://127.0.0.1:5000']
+        for dev_orig in dev_origins:
+            if dev_orig not in allowed_origins:
+                allowed_origins.append(dev_orig)
+    else:
+        allowed_origins = '*'
+
+    # Enable CORS for React frontend
+    CORS(app, resources={r"/*": {"origins": allowed_origins}}, supports_credentials=True)
 
     # Initialize extensions
     db.init_app(app)
     bcrypt.init_app(app)
     JWTManager(app)
     migrate.init_app(app, db, render_as_batch=True)
-    socketio.init_app(app, cors_allowed_origins="*", async_mode="threading")
+    socketio.init_app(app, cors_allowed_origins=allowed_origins, async_mode="threading")
 
     # Register Blueprints
     app.register_blueprint(auth_bp)
@@ -132,7 +143,10 @@ def create_app():
 
     return app
 
+# Application instance for Gunicorn / Render WSGI
+app = create_app()
+
 if __name__ == '__main__':
-    app = create_app()
-    port = int(os.getenv('PORT', 5000))
-    socketio.run(app, host='0.0.0.0', port=port, debug=True)
+    port = int(os.environ.get('PORT', 5000))
+    debug_mode = os.getenv('FLASK_ENV', 'development') == 'development'
+    socketio.run(app, host='0.0.0.0', port=port, debug=debug_mode)

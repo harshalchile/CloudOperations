@@ -102,9 +102,7 @@ export const NotificationProvider = ({ children }) => {
     if (!user) return;
 
     // Connect Socket.IO
-    const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
-    const host = window.location.hostname;
-    const socketUrl = `${protocol}//${host}:5000`;
+    const socketUrl = import.meta.env.VITE_WS_URL || window.location.origin;
 
     socketRef.current = io(socketUrl, {
       transports: ['websocket', 'polling'],

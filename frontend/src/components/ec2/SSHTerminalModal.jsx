@@ -123,8 +123,8 @@ export const SSHTerminalModal = ({ isOpen, onClose, instance }) => {
     term.writeln('Authenticating...');
 
     // Initialize SocketIO connection
-    const wsUrl = import.meta.env.VITE_WS_URL || 'http://localhost:5000';
-    const token = localStorage.getItem('authToken');
+    const wsUrl = import.meta.env.VITE_WS_URL || window.location.origin;
+    const token = localStorage.getItem('access_token') || localStorage.getItem('authToken');
 
     const socket = io(wsUrl, {
       transports: ['websocket', 'polling'],

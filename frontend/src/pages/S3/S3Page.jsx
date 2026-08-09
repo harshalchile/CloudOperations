@@ -6,6 +6,7 @@ import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
+import { getErrorMessage } from '../../utils/errorHandler';
 import {
   HardDrive,
   Plus,
@@ -38,7 +39,11 @@ import {
   User,
   Clock,
   Zap,
-  Check
+  Check,
+  Globe,
+  Link2,
+  Key,
+  Share2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -66,7 +71,7 @@ const getFileIcon = (item) => {
 };
 
 // S3 Preview Modal Component (Images, PDF, TXT, JSON Pretty-Print, Videos, Audio)
-const S3PreviewModal = ({ item, bucketName, onClose, onDownload, onCopyKey, onCopyS3Uri, showToast }) => {
+const S3PreviewModal = ({ item, bucketName, bucketRegion = 'ap-south-1', onClose, onDownload, onCopyKey, onCopyS3Uri, onCopyPublicLink, onCopyPresignedUrl, showToast }) => {
   const [previewUrl, setPreviewUrl] = useState('');
   const [loading, setLoading] = useState(true);
   const [mediaLoading, setMediaLoading] = useState(true);
@@ -90,7 +95,7 @@ const S3PreviewModal = ({ item, bucketName, onClose, onDownload, onCopyKey, onCo
         params: { bucket: bucketName, key: item.key }
       });
 
-      const url = res.data?.previewUrl || res.data?.url;
+      const url = res.data?.previewUrl || res.data?.url || res.data?.presigned_url;
       if (url) {
         setPreviewUrl(url);
 
@@ -166,11 +171,33 @@ const S3PreviewModal = ({ item, bucketName, onClose, onDownload, onCopyKey, onCo
             <span className="text-slate-400 text-[11px] font-mono">({item.size_formatted})</span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
+            {onCopyPublicLink && (
+              <button
+                onClick={() => onCopyPublicLink(bucketName, item.key, bucketRegion)}
+                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-emerald-300 rounded text-[11px] font-semibold border border-slate-700 flex items-center gap-1 cursor-pointer"
+                title="Copy Standard Public URL"
+              >
+                <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Public Link</span>
+              </button>
+            )}
+
+            {onCopyPresignedUrl && (
+              <button
+                onClick={() => onCopyPresignedUrl(bucketName, item.key)}
+                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 rounded text-[11px] font-semibold border border-slate-700 flex items-center gap-1 cursor-pointer"
+                title="Copy Temporary Presigned URL"
+              >
+                <Key className="w-3.5 h-3.5 text-amber-400" />
+                <span>Presigned URL</span>
+              </button>
+            )}
+
             <button
               onClick={() => onCopyS3Uri(bucketName, item.key)}
               className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded text-[11px] font-semibold border border-slate-700 flex items-center gap-1 cursor-pointer"
-              title="Copy S3 URI"
+              title="Copy S3 URI (s3://...)"
             >
               <Copy className="w-3.5 h-3.5 text-blue-400" />
               <span>S3 URI</span>
@@ -182,7 +209,7 @@ const S3PreviewModal = ({ item, bucketName, onClose, onDownload, onCopyKey, onCo
                 target="_blank"
                 rel="noopener noreferrer"
                 className="p-1.5 text-slate-400 hover:text-white bg-slate-800 rounded cursor-pointer"
-                title="Open Raw Presigned URL"
+                title="Open Raw Presigned URL in New Tab"
               >
                 <ExternalLink className="w-3.5 h-3.5" />
               </a>
@@ -499,7 +526,7 @@ export const S3Page = () => {
         if (isManualRefresh) showToast(`Refreshed ${bucketName}`);
       }
     } catch (err) {
-      const msg = err.response?.data?.error || err.response?.data?.message || `Failed to fetch contents for ${bucketName}.`;
+      const msg = getErrorMessage(err, `Failed to fetch contents for ${bucketName}.`);
       showToast(msg, 'error');
     } finally {
       setLoadingObjects(false);
@@ -577,11 +604,11 @@ export const S3Page = () => {
         setNewBucketName('');
         await fetchBuckets(true);
       } else {
-        const errorText = res.data?.error || 'AWS CreateBucket failed.';
+        const errorText = getErrorMessage(res.data, 'AWS CreateBucket failed.');
         showToast(errorText, 'error');
       }
     } catch (err) {
-      const msg = err.response?.data?.error || err.response?.data?.message || err.message || 'Failed to create bucket.';
+      const msg = getErrorMessage(err, 'Failed to create bucket.');
       showToast(msg, 'error');
     } finally {
       setIsSubmittingBucket(false);
@@ -611,7 +638,7 @@ export const S3Page = () => {
       setNewFolderName('');
       await fetchObjectsAndFolders(urlBucketName, currentPrefix, true);
     } catch (err) {
-      const msg = err.response?.data?.error || err.response?.data?.message || 'Failed to create folder.';
+      const msg = getErrorMessage(err, 'Failed to create folder.');
       showToast(msg, 'error');
     } finally {
       setIsSubmittingFolder(false);
@@ -664,7 +691,7 @@ export const S3Page = () => {
         showToast(res.data?.message || `S3 Bucket "${targetBucket}" deleted successfully${accName ? ` from ${accName}` : ''}.`);
         await fetchBuckets(true);
       } catch (err) {
-        const msg = err.response?.data?.error || err.response?.data?.message || `Failed to delete bucket "${targetBucket}".`;
+        const msg = getErrorMessage(err, `Failed to delete bucket "${targetBucket}".`);
         showToast(msg, 'error');
       }
     } else if (type === 'delete-object') {
@@ -677,7 +704,7 @@ export const S3Page = () => {
         showToast(res.data?.message || `Deleted "${targetObjectKey}" successfully.`);
         await fetchObjectsAndFolders(urlBucketName, currentPrefix, true);
       } catch (err) {
-        const msg = err.response?.data?.error || err.response?.data?.message || `Failed to delete "${targetObjectKey}".`;
+        const msg = getErrorMessage(err, `Failed to delete "${targetObjectKey}".`);
         showToast(msg, 'error');
       }
     }
@@ -769,7 +796,7 @@ export const S3Page = () => {
       setUploadProgress(0);
       await fetchObjectsAndFolders(urlBucketName, currentPrefix, true);
     } catch (err) {
-      const msg = err.response?.data?.error || err.response?.data?.message || 'Upload Failed.';
+      const msg = getErrorMessage(err, 'Upload Failed.');
       showToast(`❌ Upload Failed: ${msg}`, 'error');
     } finally {
       setIsUploading(false);
@@ -801,7 +828,7 @@ export const S3Page = () => {
       link.remove();
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      const msg = err.response?.data?.error || err.response?.data?.message || 'Failed to download file.';
+      const msg = getErrorMessage(err, 'Failed to download file.');
       showToast(msg, 'error');
     }
   };
@@ -833,7 +860,8 @@ export const S3Page = () => {
         setItemProperties(res.data);
       }
     } catch (err) {
-      showToast('Failed to fetch object metadata from AWS S3.', 'error');
+      const msg = getErrorMessage(err, 'Failed to fetch object metadata from AWS S3.');
+      showToast(msg, 'error');
     } finally {
       setPropertiesLoading(false);
     }
@@ -874,10 +902,52 @@ export const S3Page = () => {
       setNewObjectKey('');
       await fetchObjectsAndFolders(urlBucketName, currentPrefix, true);
     } catch (err) {
-      const msg = err.response?.data?.error || err.response?.data?.message || 'Failed to rename object.';
+      const msg = getErrorMessage(err, 'Failed to rename object.');
       showToast(msg, 'error');
     } finally {
       setIsRenaming(false);
+    }
+  };
+
+  // Safe S3 Public URL & Presigned URL Helpers
+  const generatePublicS3Url = (bName, key, region = 'ap-south-1') => {
+    if (!bName || !key) return '';
+    const encodedKey = key
+      .split('/')
+      .map((segment) => encodeURIComponent(segment))
+      .join('/');
+    const effectiveRegion = region || 'ap-south-1';
+    return `https://${bName}.s3.${effectiveRegion}.amazonaws.com/${encodedKey}`;
+  };
+
+  const handleCopyPublicLink = (bName, key, region = 'ap-south-1') => {
+    const publicUrl = generatePublicS3Url(bName, key, region);
+    navigator.clipboard.writeText(publicUrl);
+    showToast(`Copied S3 Public URL to clipboard`);
+  };
+
+  const handleCopyPresignedUrl = async (bName, key) => {
+    try {
+      showToast(`Generating temporary signed URL for ${key}...`, 'info');
+      const headers = {};
+      const accId = getBucketAccountId(bName);
+      if (accId && accId !== 'all') {
+        headers['X-AWS-Account-ID'] = accId;
+      }
+      const res = await api.get('/s3/presigned', {
+        params: { bucket: bName, key: key, account_id: accId },
+        headers
+      });
+      const signedUrl = res.data?.url || res.data?.previewUrl || res.data?.presigned_url;
+      if (signedUrl) {
+        navigator.clipboard.writeText(signedUrl);
+        showToast('Copied Presigned URL to clipboard (Valid for 1 hr)', 'success');
+      } else {
+        showToast('Failed to generate presigned URL.', 'error');
+      }
+    } catch (err) {
+      const msg = getErrorMessage(err, 'Failed to generate presigned URL.');
+      showToast(msg, 'error');
     }
   };
 
@@ -1392,6 +1462,22 @@ export const S3Page = () => {
                                 </button>
 
                                 <button
+                                  onClick={(e) => { e.stopPropagation(); handleCopyPublicLink(urlBucketName, item.key); }}
+                                  className="p-1.5 text-slate-400 hover:text-emerald-300 hover:bg-slate-800 rounded transition-colors cursor-pointer"
+                                  title="Copy S3 Public Link"
+                                >
+                                  <Globe className="w-3.5 h-3.5 text-emerald-400" />
+                                </button>
+
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleCopyPresignedUrl(urlBucketName, item.key); }}
+                                  className="p-1.5 text-slate-400 hover:text-amber-300 hover:bg-slate-800 rounded transition-colors cursor-pointer"
+                                  title="Generate & Copy Presigned URL (1 hr)"
+                                >
+                                  <Key className="w-3.5 h-3.5 text-amber-400" />
+                                </button>
+
+                                <button
                                   onClick={(e) => { e.stopPropagation(); triggerRenameObject(item.key); }}
                                   className="p-1.5 text-slate-400 hover:text-amber-400 hover:bg-slate-800 rounded transition-colors cursor-pointer"
                                   title="Rename Object Key"
@@ -1404,7 +1490,7 @@ export const S3Page = () => {
                             <button
                               onClick={(e) => { e.stopPropagation(); handleCopyS3Uri(urlBucketName, item.key); }}
                               className="p-1.5 text-slate-400 hover:text-blue-300 hover:bg-slate-800 rounded transition-colors cursor-pointer"
-                              title="Copy S3 URI"
+                              title="Copy S3 URI (s3://...)"
                             >
                               <Copy className="w-3.5 h-3.5 text-blue-400" />
                             </button>
@@ -1436,7 +1522,7 @@ export const S3Page = () => {
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
             transition={{ duration: 0.1 }}
-            className="fixed z-50 w-48 bg-slate-900 border border-slate-800 rounded-lg shadow-2xl py-1 text-xs font-mono-tabular select-none"
+            className="fixed z-50 w-52 bg-slate-900 border border-slate-800 rounded-lg shadow-2xl py-1 text-xs font-mono-tabular select-none"
             style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
           >
             {!contextMenu.item.is_folder && (
@@ -1453,6 +1539,20 @@ export const S3Page = () => {
                   className="w-full text-left px-3 py-1.5 hover:bg-slate-800 text-slate-200 flex items-center gap-2 cursor-pointer"
                 >
                   <Download className="w-3.5 h-3.5 text-blue-400" /> Download
+                </button>
+
+                <button
+                  onClick={() => { handleCopyPublicLink(urlBucketName, contextMenu.item.key); setContextMenu(null); }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-slate-800 text-emerald-300 flex items-center gap-2 cursor-pointer"
+                >
+                  <Globe className="w-3.5 h-3.5 text-emerald-400" /> Copy Public Link
+                </button>
+
+                <button
+                  onClick={() => { handleCopyPresignedUrl(urlBucketName, contextMenu.item.key); setContextMenu(null); }}
+                  className="w-full text-left px-3 py-1.5 hover:bg-slate-800 text-amber-300 flex items-center gap-2 cursor-pointer"
+                >
+                  <Key className="w-3.5 h-3.5 text-amber-400" /> Generate Presigned URL
                 </button>
 
                 <button
@@ -1475,7 +1575,7 @@ export const S3Page = () => {
               onClick={() => { handleCopyObjectKey(contextMenu.item.key); setContextMenu(null); }}
               className="w-full text-left px-3 py-1.5 hover:bg-slate-800 text-slate-200 flex items-center gap-2 cursor-pointer"
             >
-              <Copy className="w-3.5 h-3.5 text-slate-400" /> Copy Key
+              <FileCode className="w-3.5 h-3.5 text-slate-400" /> Copy Key
             </button>
 
             <button
@@ -1841,10 +1941,19 @@ export const S3Page = () => {
               </div>
             ) : itemProperties ? (
               <div className="space-y-3 text-xs">
-                <div className="p-3 bg-slate-900 border border-slate-800 rounded space-y-1.5 font-mono-tabular">
-                  <div className="flex justify-between">
+                <div className="p-3 bg-slate-900 border border-slate-800 rounded space-y-2 font-mono-tabular">
+                  <div className="flex justify-between items-center">
                     <span className="text-slate-400">Object Key:</span>
-                    <span className="text-white font-mono truncate max-w-xs">{itemProperties.key}</span>
+                    <div className="flex items-center gap-1.5 max-w-xs">
+                      <span className="text-white font-mono truncate">{itemProperties.key}</span>
+                      <button
+                        onClick={() => handleCopyObjectKey(itemProperties.key)}
+                        className="p-1 text-slate-400 hover:text-slate-200 cursor-pointer"
+                        title="Copy Key"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </div>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-slate-400">Bucket:</span>
@@ -1854,6 +1963,51 @@ export const S3Page = () => {
                     <span className="text-slate-400">AWS Region:</span>
                     <span className="text-slate-300 font-semibold">{itemProperties.region}</span>
                   </div>
+
+                  {/* S3 URI */}
+                  <div className="flex justify-between items-center bg-slate-950 p-2 rounded border border-slate-800/80">
+                    <span className="text-slate-400 text-[11px]">S3 URI:</span>
+                    <div className="flex items-center gap-1.5 max-w-[280px]">
+                      <span className="text-blue-300 font-mono text-[11px] truncate">s3://{itemProperties.bucket}/{itemProperties.key}</span>
+                      <button
+                        onClick={() => handleCopyS3Uri(itemProperties.bucket, itemProperties.key)}
+                        className="p-1 text-slate-400 hover:text-blue-300 cursor-pointer shrink-0"
+                        title="Copy S3 URI"
+                      >
+                        <Copy className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Public Link */}
+                  <div className="flex justify-between items-center bg-slate-950 p-2 rounded border border-slate-800/80">
+                    <span className="text-slate-400 text-[11px]">Public S3 URL:</span>
+                    <div className="flex items-center gap-1.5 max-w-[280px]">
+                      <span className="text-emerald-300 font-mono text-[11px] truncate">
+                        {itemProperties.public_url || generatePublicS3Url(itemProperties.bucket, itemProperties.key, itemProperties.region)}
+                      </span>
+                      <button
+                        onClick={() => handleCopyPublicLink(itemProperties.bucket, itemProperties.key, itemProperties.region)}
+                        className="p-1 text-slate-400 hover:text-emerald-300 cursor-pointer shrink-0"
+                        title="Copy Public S3 URL"
+                      >
+                        <Globe className="w-3 h-3 text-emerald-400" />
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Presigned URL Option */}
+                  <div className="flex justify-between items-center bg-slate-950 p-2 rounded border border-slate-800/80">
+                    <span className="text-slate-400 text-[11px]">Temporary Presigned:</span>
+                    <button
+                      onClick={() => handleCopyPresignedUrl(itemProperties.bucket, itemProperties.key)}
+                      className="px-2 py-1 bg-amber-500/10 border border-amber-500/30 text-amber-300 hover:bg-amber-500/20 rounded text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
+                    >
+                      <Key className="w-3 h-3 text-amber-400" />
+                      <span>Copy Presigned URL</span>
+                    </button>
+                  </div>
+
                   <div className="flex justify-between">
                     <span className="text-slate-400">Content-Type:</span>
                     <span className="text-blue-400 font-mono">{itemProperties.content_type}</span>
@@ -1897,10 +2051,13 @@ export const S3Page = () => {
         <S3PreviewModal
           item={previewItem}
           bucketName={urlBucketName}
+          bucketRegion={itemProperties?.region || 'ap-south-1'}
           onClose={() => setPreviewItem(null)}
           onDownload={handleDownloadObject}
           onCopyKey={handleCopyObjectKey}
           onCopyS3Uri={handleCopyS3Uri}
+          onCopyPublicLink={handleCopyPublicLink}
+          onCopyPresignedUrl={handleCopyPresignedUrl}
           showToast={showToast}
         />
       )}

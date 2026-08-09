@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { CheckCircle2, AlertTriangle, Info, X } from 'lucide-react';
+import { getErrorMessage } from '../utils/errorHandler';
 
 const ToastContext = createContext(null);
 
@@ -9,7 +10,8 @@ export const ToastProvider = ({ children }) => {
 
   const addToast = (message, type = 'success') => {
     const id = Date.now() + Math.random();
-    setToasts((prev) => [...prev, { id, message, type }]);
+    const safeMessage = typeof message === 'string' ? message : getErrorMessage(message, 'Operation completed.');
+    setToasts((prev) => [...prev, { id, message: safeMessage, type }]);
 
     setTimeout(() => {
       removeToast(id);

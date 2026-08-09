@@ -71,7 +71,13 @@ def upload_object_controller(current_user):
 def get_presigned_url_controller(current_user):
     bucket_name = request.args.get('bucket') or request.args.get('bucket_name')
     object_key = request.args.get('key') or request.args.get('object_key')
-    expires_in = int(request.args.get('expires_in', 3600))
+    expires_in_raw = request.args.get('expires_in')
+    expires_in = None
+    if expires_in_raw:
+        try:
+            expires_in = int(expires_in_raw)
+        except ValueError:
+            expires_in = None
     account_id = request.args.get('account_id') or request.args.get('aws_account_id') or request.headers.get('X-AWS-Account-ID')
 
     data, code = get_presigned_url_service(current_user, bucket_name, object_key, expires_in=expires_in, requested_account_id=account_id)
@@ -82,7 +88,7 @@ def preview_object_controller(current_user):
     object_key = request.args.get('key') or request.args.get('object_key')
     account_id = request.args.get('account_id') or request.args.get('aws_account_id') or request.headers.get('X-AWS-Account-ID')
 
-    data, code = get_presigned_url_service(current_user, bucket_name, object_key, expires_in=3600, requested_account_id=account_id)
+    data, code = get_presigned_url_service(current_user, bucket_name, object_key, expires_in=None, requested_account_id=account_id)
     return jsonify(data), code
 
 def download_object_controller(current_user):
