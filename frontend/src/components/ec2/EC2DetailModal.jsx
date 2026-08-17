@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { StatusBadge } from '../ui/StatusBadge';
 import api from '../../services/api';
+import { getErrorMessage } from '../../utils/errorHandler';
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip
 } from 'recharts';
@@ -50,7 +51,7 @@ export const EC2DetailModal = ({ isOpen, onClose, instance }) => {
       }
     } catch (err) {
       console.error('Failed to fetch CloudWatch metrics for instance:', err);
-      const errMsg = err.response?.data?.error?.message || err.response?.data?.error || err.message || 'Failed to load metrics.';
+      const errMsg = getErrorMessage(err, 'Failed to load metrics.');
       setMetricsError(errMsg);
     } finally {
       setLoadingMetrics(false);

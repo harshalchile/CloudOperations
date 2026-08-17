@@ -3,6 +3,7 @@ import { PageHeader } from '../../components/layout/PageHeader';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import api from '../../services/api';
+import { getErrorMessage } from '../../utils/errorHandler';
 import { ShieldCheck, Globe, Key, Lock, CheckCircle2, AlertTriangle, Loader2, Save, Trash2, ArrowRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -46,11 +47,12 @@ export const ConnectAWSPage = () => {
         setTestResult(res.data);
         showToast('Connected Successfully via AWS STS GetCallerIdentity');
       } else {
-        setTestResult({ error: res.data.error || 'Connection failed.' });
-        showToast(res.data.error || 'AWS Connection Failed', 'error');
+        const errorMsg = getErrorMessage(res.data, 'AWS Connection Failed');
+        setTestResult({ error: errorMsg });
+        showToast(errorMsg, 'error');
       }
     } catch (err) {
-      const errorMsg = err.response?.data?.error || 'Failed to connect to AWS STS service.';
+      const errorMsg = getErrorMessage(err, 'Failed to connect to AWS STS service.');
       setTestResult({ error: errorMsg });
       showToast(errorMsg, 'error');
     } finally {
@@ -76,7 +78,7 @@ export const ConnectAWSPage = () => {
       await fetchAwsStatus();
       navigate('/dashboard');
     } catch (err) {
-      const errorMsg = err.response?.data?.error || 'Failed to save AWS credentials.';
+      const errorMsg = getErrorMessage(err, 'Failed to save AWS credentials.');
       showToast(errorMsg, 'error');
     } finally {
       setIsSaving(false);
@@ -92,7 +94,8 @@ export const ConnectAWSPage = () => {
       setAccessKey('');
       setSecretKey('');
     } catch (err) {
-      showToast('Failed to disconnect AWS account.', 'error');
+      const errorMsg = getErrorMessage(err, 'Failed to disconnect AWS account.');
+      showToast(errorMsg, 'error');
     }
   };
 

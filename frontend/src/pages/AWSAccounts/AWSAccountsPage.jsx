@@ -5,6 +5,7 @@ import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
+import { getErrorMessage } from '../../utils/errorHandler';
 import {
   Building2,
   Plus,
@@ -77,16 +78,6 @@ export const AWSAccountsPage = () => {
   useEffect(() => {
     loadAccounts();
   }, []);
-
-  const getErrorMessage = (err, fallback) => {
-    if (!err) return fallback;
-    const data = err.response?.data;
-    if (data?.error?.message) return data.error.message;
-    if (data?.aws_error_message) return data.aws_error_message;
-    if (typeof data?.error === 'string') return data.error;
-    if (data?.message) return data.message;
-    return err.message || fallback;
-  };
 
   const handleOpenAddModal = () => {
     setFormData({

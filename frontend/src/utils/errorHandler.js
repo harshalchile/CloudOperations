@@ -10,15 +10,18 @@
 export const getErrorMessage = (error, fallback = 'An unexpected error occurred.') => {
   if (!error) return fallback;
 
-  // If already a primitive string
+  // 1. Primitive types
   if (typeof error === 'string') {
     const trimmed = error.trim();
     return trimmed.length > 0 ? trimmed : fallback;
   }
+  if (typeof error === 'number' || typeof error === 'boolean') {
+    return String(error);
+  }
 
-  // If error is an object (Axios error, AWS error dict, standard Error instance)
+  // 2. Object handling
   if (typeof error === 'object') {
-    // 1. Axios Response payload extraction
+    // 2a. Axios Response payload extraction
     if (error.response && error.response.data) {
       const data = error.response.data;
 
@@ -26,45 +29,42 @@ export const getErrorMessage = (error, fallback = 'An unexpected error occurred.
         return data.trim();
       }
 
-      // Check data.aws_error_message
-      if (data.aws_error_message && typeof data.aws_error_message === 'string') {
-        return data.aws_error_message;
+      if (data.aws_error_message && typeof data.aws_error_message === 'string' && data.aws_error_message.trim()) {
+        return data.aws_error_message.trim();
       }
 
-      // Check data.message
       if (data.message && typeof data.message === 'string' && data.message.trim()) {
         return data.message.trim();
       }
 
-      // Check data.error (can be string or { code, message, request_id })
       if (data.error) {
         if (typeof data.error === 'string' && data.error.trim()) {
           return data.error.trim();
         }
         if (typeof data.error === 'object') {
-          if (data.error.message && typeof data.error.message === 'string') {
-            return data.error.message;
+          if (data.error.message && typeof data.error.message === 'string' && data.error.message.trim()) {
+            return data.error.message.trim();
           }
-          if (data.error.code && typeof data.error.code === 'string') {
-            return `AWS Error: ${data.error.code}`;
+          if (data.error.code && typeof data.error.code === 'string' && data.error.code.trim()) {
+            return `AWS Error: ${data.error.code.trim()}`;
           }
           try {
-            return JSON.stringify(data.error);
+            const str = JSON.stringify(data.error);
+            if (str && str !== '{}') return str;
           } catch {
             // fallback
           }
         }
       }
 
-      // Check data.code
-      if (data.code && typeof data.code === 'string') {
-        return `AWS Error: ${data.code}`;
+      if (data.code && typeof data.code === 'string' && data.code.trim()) {
+        return `AWS Error: ${data.code.trim()}`;
       }
     }
 
-    // 2. Direct AWS / Custom Error dict { code, message, request_id }
-    if (error.aws_error_message && typeof error.aws_error_message === 'string') {
-      return error.aws_error_message;
+    // 2b. Direct AWS / Custom Error dict { code, message, request_id } or { error: { ... } }
+    if (error.aws_error_message && typeof error.aws_error_message === 'string' && error.aws_error_message.trim()) {
+      return error.aws_error_message.trim();
     }
 
     if (error.error) {
@@ -72,14 +72,15 @@ export const getErrorMessage = (error, fallback = 'An unexpected error occurred.
         return error.error.trim();
       }
       if (typeof error.error === 'object') {
-        if (error.error.message && typeof error.error.message === 'string') {
-          return error.error.message;
+        if (error.error.message && typeof error.error.message === 'string' && error.error.message.trim()) {
+          return error.error.message.trim();
         }
-        if (error.error.code && typeof error.error.code === 'string') {
-          return `AWS Error: ${error.error.code}`;
+        if (error.error.code && typeof error.error.code === 'string' && error.error.code.trim()) {
+          return `AWS Error: ${error.error.code.trim()}`;
         }
         try {
-          return JSON.stringify(error.error);
+          const str = JSON.stringify(error.error);
+          if (str && str !== '{}') return str;
         } catch {
           // fallback
         }
@@ -90,11 +91,11 @@ export const getErrorMessage = (error, fallback = 'An unexpected error occurred.
       return error.message.trim();
     }
 
-    if (error.code && typeof error.code === 'string') {
-      return `AWS Error: ${error.code}`;
+    if (error.code && typeof error.code === 'string' && error.code.trim()) {
+      return `AWS Error: ${error.code.trim()}`;
     }
 
-    // 3. Fallback stringification
+    // 2c. Fallback stringification for arbitrary plain objects
     try {
       const json = JSON.stringify(error);
       if (json && json !== '{}') return json;
@@ -103,7 +104,8 @@ export const getErrorMessage = (error, fallback = 'An unexpected error occurred.
     }
   }
 
-  return String(error || fallback);
+  const str = String(error);
+  return str && str !== '[object Object]' ? str : fallback;
 };
 
 export default getErrorMessage;

@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import api from '../services/api';
+import { getErrorMessage } from '../utils/errorHandler';
 
 const AuthContext = createContext(null);
 
@@ -147,7 +148,7 @@ export const AuthProvider = ({ children }) => {
       if (err.response.status >= 500) {
         return { success: false, error: 'Server error. Please try again.' };
       }
-      const msg = err.response?.data?.error || err.response?.data?.message || 'Login failed. Invalid credentials.';
+      const msg = getErrorMessage(err, 'Login failed. Invalid credentials.');
       return { success: false, error: msg };
     }
   };
@@ -169,7 +170,7 @@ export const AuthProvider = ({ children }) => {
       if (!err.response) {
         return { success: false, error: 'Backend server is unavailable.' };
       }
-      const msg = err.response?.data?.error || err.response?.data?.message || 'Registration failed.';
+      const msg = getErrorMessage(err, 'Registration failed.');
       return { success: false, error: msg };
     }
   };
@@ -198,12 +199,12 @@ export const AuthProvider = ({ children }) => {
         return { success: false, error: 'Email address is already in use.' };
       }
       if (err.response.status === 422) {
-        return { success: false, error: err.response.data?.error || 'Validation error.' };
+        return { success: false, error: getErrorMessage(err, 'Validation error.') };
       }
       if (err.response.status >= 500) {
-        return { success: false, error: err.response.data?.error || 'Server error. Please try again.' };
+        return { success: false, error: getErrorMessage(err, 'Server error. Please try again.') };
       }
-      const msg = err.response?.data?.error || err.response?.data?.message || 'Failed to update profile.';
+      const msg = getErrorMessage(err, 'Failed to update profile.');
       return { success: false, error: msg };
     }
   };
@@ -227,7 +228,7 @@ export const AuthProvider = ({ children }) => {
       if (err.response.status === 401) {
         return { success: false, error: 'Session expired. Please login again.' };
       }
-      const msg = err.response?.data?.error || err.response?.data?.message || 'Failed to change password.';
+      const msg = getErrorMessage(err, 'Failed to change password.');
       return { success: false, error: msg };
     }
   };
@@ -245,7 +246,7 @@ export const AuthProvider = ({ children }) => {
       if (!err.response) {
         return { success: false, error: 'Backend server is unavailable.' };
       }
-      const msg = err.response?.data?.error || err.response?.data?.message || 'Failed to reset password.';
+      const msg = getErrorMessage(err, 'Failed to reset password.');
       return { success: false, error: msg };
     }
   };

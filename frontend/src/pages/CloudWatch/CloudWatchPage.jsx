@@ -4,6 +4,7 @@ import { StatusBadge } from '../../components/ui/StatusBadge';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
 import api from '../../services/api';
+import { getErrorMessage } from '../../utils/errorHandler';
 import {
   Activity,
   ShieldAlert,
@@ -115,16 +116,6 @@ export const CloudWatchPage = () => {
   });
   const [submittingS3Watch, setSubmittingS3Watch] = useState(false);
   const [watchToDelete, setWatchToDelete] = useState(null);
-
-  const getErrorMessage = (err, fallback = 'Operation failed.') => {
-    if (!err) return fallback;
-    const data = err.response?.data;
-    if (data?.error?.message) return data.error.message;
-    if (data?.aws_error_message) return data.aws_error_message;
-    if (typeof data?.error === 'string') return data.error;
-    if (data?.message) return data.message;
-    return err.message || fallback;
-  };
 
   // Fetch Summary Stats
   const fetchStats = useCallback(async () => {

@@ -23,6 +23,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '../../context/ToastContext';
 import { useAuth } from '../../context/AuthContext';
+import { getErrorMessage } from '../../utils/errorHandler';
 
 export const SSHTerminalModal = ({ isOpen, onClose, instance }) => {
   const { user } = useAuth();
@@ -162,7 +163,7 @@ export const SSHTerminalModal = ({ isOpen, onClose, instance }) => {
 
     socket.on('ssh_error', (data) => {
       setStatus('error');
-      const err = data.error || 'Connection Failed';
+      const err = getErrorMessage(data?.error, 'Connection Failed');
       setErrorMsg(err);
       term.writeln(`\r\n\x1b[31m${err}\x1b[0m`);
     });
@@ -225,7 +226,7 @@ export const SSHTerminalModal = ({ isOpen, onClose, instance }) => {
       xtermRef.current.clear();
       xtermRef.current.writeln('Authenticating...');
     }
-    const token = localStorage.getItem('authToken');
+    const token = localStorage.getItem('access_token') || localStorage.getItem('authToken');
     const socket = socketRef.current;
     if (socket) {
       socket.connect();

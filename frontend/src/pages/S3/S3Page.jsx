@@ -439,16 +439,6 @@ export const S3Page = () => {
     resourceName: '',
   });
 
-  const getErrorMessage = (err, fallback = 'Operation failed.') => {
-    if (!err) return fallback;
-    const data = err.response?.data;
-    if (data?.error?.message) return data.error.message;
-    if (data?.aws_error_message) return data.aws_error_message;
-    if (typeof data?.error === 'string') return data.error;
-    if (data?.message) return data.message;
-    return err.message || fallback;
-  };
-
   // Fetch S3 Buckets List across selected AWS Accounts
   const fetchBuckets = async (isManualRefresh = false) => {
     if (isManualRefresh) setRefreshingBuckets(true);

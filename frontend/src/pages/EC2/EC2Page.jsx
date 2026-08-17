@@ -9,6 +9,7 @@ import { EC2DetailModal } from '../../components/ec2/EC2DetailModal';
 import { useAuth } from '../../context/AuthContext';
 import { useToast } from '../../context/ToastContext';
 import api from '../../services/api';
+import { getErrorMessage } from '../../utils/errorHandler';
 import {
   Server,
   Play,
@@ -65,16 +66,6 @@ export const EC2Page = () => {
 
   // EC2 Detail Modal State (With CloudWatch Telemetry)
   const [detailInstance, setDetailInstance] = useState(null);
-
-  const getErrorMessage = (err, fallback = 'Operation failed.') => {
-    if (!err) return fallback;
-    const data = err.response?.data;
-    if (data?.error?.message) return data.error.message;
-    if (data?.aws_error_message) return data.aws_error_message;
-    if (typeof data?.error === 'string') return data.error;
-    if (data?.message) return data.message;
-    return err.message || fallback;
-  };
 
   const fetchInstances = async (isManualRefresh = false) => {
     if (isManualRefresh) setRefreshing(true);

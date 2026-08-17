@@ -22,6 +22,7 @@ import {
 import { motion, AnimatePresence } from 'framer-motion';
 import { useToast } from '../../context/ToastContext';
 import api from '../../services/api';
+import { getErrorMessage } from '../../utils/errorHandler';
 
 export const EC2ConnectModal = ({ isOpen, onClose, instance, onOpenTerminal }) => {
   const { showToast } = useToast();
@@ -92,7 +93,7 @@ export const EC2ConnectModal = ({ isOpen, onClose, instance, onOpenTerminal }) =
         }
       }
     } catch (err) {
-      const msg = err.response?.data?.error || err.response?.data?.message || err.message || 'Failed to fetch password from AWS EC2.';
+      const msg = getErrorMessage(err, 'Failed to fetch password from AWS EC2.');
       setPasswordError(msg);
       setIsPolling(false);
     } finally {
@@ -178,7 +179,7 @@ export const EC2ConnectModal = ({ isOpen, onClose, instance, onOpenTerminal }) =
         showToast(`Downloaded RDP file for ${instance.name}`);
       }
     } catch (err) {
-      const errorMsg = err.response?.data?.error || 'Failed to generate RDP file.';
+      const errorMsg = getErrorMessage(err, 'Failed to generate RDP file.');
       showToast(errorMsg, 'error');
     }
   };
